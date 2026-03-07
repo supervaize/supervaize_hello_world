@@ -1,0 +1,287 @@
+---
+id: claude-code-integration
+title: Claude Code Integration
+displayed_sidebar: integrationsSidebar
+---
+
+import "bootstrap-icons/font/bootstrap-icons.css";
+
+# Claude Code Integration
+
+Supervaize provides a [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) skill that automatically integrates the **Supervaizer Controller** into any Python AI agent project.
+
+This lets you:
+
+- analyze your existing Python agent code with AI
+- interactively configure cases, steps, data reporting, and human-in-the-loop
+- install the supervaizer package and dependencies automatically
+- generate fully customized controller files ready to connect to Supervaize
+
+## What Is Claude Code?
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) is Anthropic's CLI tool for working with code using Claude. It can read, edit, and generate files in your project. **Skills** are reusable instruction sets that teach Claude Code how to perform specific tasks — in this case, integrating the Supervaizer Controller.
+
+## How It Works
+
+The `/supervaizer-integrate` skill guides Claude through five phases:
+
+| Phase | What Happens |
+|---|---|
+| **1. Discovery** | Claude scans your project: package manager, framework, agent type, inputs, outputs, processing stages |
+| **2. Requirements** | Claude asks targeted questions about cases, steps, data reporting, HITL, parameters, and job fields — with smart defaults inferred from your code |
+| **3. Install** | Installs `supervaizer`, `fastapi`, `loguru`, and `shortuuid` using your package manager |
+| **4. Generate** | Creates `supervaizer_control.py`, `agent_impl.py`, `__init__.py`, `.envrc_template`, and `main.py` — all customized to your agent |
+| **5. Validate** | Verifies the generated files compile and presents next steps |
+
+## Before You Start
+
+You need:
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) installed (`npm install -g @anthropic-ai/claude-code`)
+- A Python AI agent project (Python 3.12+)
+- A package manager: **uv** (recommended), **pip**, or **poetry**
+
+## Setup
+
+### 1. Add the skill files to your project
+
+Copy the skill files from the [Hello World](https://github.com/supervaize/supervaize_hello_world) repository:
+
+```bash
+# Clone the reference project
+git clone https://github.com/supervaize/supervaize_hello_world.git /tmp/supervaize_hello_world
+
+# Copy skill files into your project
+mkdir -p .claude/skills .claude/commands
+cp /tmp/supervaize_hello_world/.claude/skills/supervaizer-integrate.md .claude/skills/
+cp /tmp/supervaize_hello_world/.claude/commands/supervaizer-integrate.md .claude/commands/
+```
+
+Your project should now contain:
+
+```
+your-project/
+├── .claude/
+│   ├── commands/
+│   │   └── supervaizer-integrate.md
+│   └── skills/
+│       └── supervaizer-integrate.md
+├── your_agent.py
+└── ...
+```
+
+### 2. (Optional) Add a CLAUDE.md
+
+If your project already has a `CLAUDE.md`, add this section so Claude Code discovers the skill automatically:
+
+```markdown
+## Skills
+
+### Supervaizer-integrate
+- **Trigger**: When user wants to integrate the Supervaizer Controller
+- **Command**: `/supervaizer-integrate`
+- **Location**: `.claude/skills/supervaizer-integrate.md`
+```
+
+### 3. Run the skill
+
+Open Claude Code in your project directory:
+
+```bash
+claude
+```
+
+Then type:
+
+```
+/supervaizer-integrate
+```
+
+Claude begins by scanning your project and presents a summary of what it found.
+
+## Interactive Requirements Gathering
+
+Claude asks six sets of questions, pre-filling answers based on your code:
+
+### Agent Identity
+
+- Agent name and description (inferred from your code)
+- Author name and email
+- Version string
+- Tags for discoverability
+
+### Cases & Steps
+
+- What constitutes a single "case" in your workflow (e.g., "processing one document", "handling one customer request")
+- What are the distinct steps within each case (e.g., "1. Parse input, 2. Call LLM, 3. Format output")
+- Whether the agent can process multiple cases in a single job
+
+### Data Reporting
+
+- What data to report at each step (input data, LLM tokens, intermediate results, final output, errors, custom metrics)
+- How costs should be calculated (LLM API costs, fixed per case, custom, or none)
+
+### Human-in-the-Loop
+
+- Whether any step requires human approval before proceeding
+- At which step(s) human approval should be requested
+- What form fields the human should see (Approved/Rejected, free text feedback, choice selection)
+- What information to show the human for their decision
+
+### Parameters & Secrets
+
+- API keys and secrets the agent needs (auto-detected from code: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
+- Configuration parameters settable from the Supervaize UI
+
+### Job Input Fields
+
+- What inputs users provide when starting a job (detected from your agent's function parameters)
+- For each field: name, type (`CharField`, `IntegerField`, `BooleanField`, `ChoiceField`), required, description
+
+## Generated Files
+
+After answering the questions, Claude generates five files:
+
+### `supervaizer_control.py` — Controller Configuration
+
+The central hub containing:
+
+- **Parameter definitions** — secrets and environment variables
+- **Agent methods** — `job_start`, `job_stop`, `job_status` (and `human_answer` if HITL is enabled)
+- **Method fields** — user input form for starting jobs
+- **Agent declaration** — name, description, author, version, tags
+- **Account setup** — Supervaize API credentials from environment variables
+- **Server configuration** — A2A endpoints and admin interface
+
+### `agent_impl.py` — Job/Case/Step Implementation
+
+Wraps your existing agent logic into the Supervaizer lifecycle pattern:
+
+- `job_start()` — main execution entry point, creates cases and steps
+- `process_case()` — processes a single case through all steps with data reporting
+- `job_stop()` — graceful stop handler
+- `job_status()` — status reporting
+- `handle_human_input()` — processes human decisions (if HITL is enabled)
+
+### `__init__.py` — Shared Exports
+
+Exports the `supervaize_account` object for use across modules.
+
+### `.envrc_template` — Environment Variables
+
+Template with all required environment variables:
+
+```bash
+export SUPERVAIZE_API_URL=https://app.supervaize.com
+export SUPERVAIZE_API_KEY=GET_FROM_APP.SUPERVAIZE.COM
+export SUPERVAIZE_WORKSPACE_ID=your_workspace_slug
+export SUPERVAIZER_HOST=localhost
+export SUPERVAIZER_PORT=8000
+# Agent-specific secrets (auto-detected)
+# export OPENAI_API_KEY=...
+```
+
+### `main.py` — Entry Point
+
+FastAPI application entry point that imports and exposes the server.
+
+## After Integration
+
+Once the files are generated:
+
+1. [Create your developer account](/docs/supervaize-fleet/developer-account#getting_started) on Supervaize
+2. Generate an API key and get your workspace ID
+3. Copy `.envrc_template` to `.envrc` and fill in your credentials
+4. Start the server:
+
+```bash
+supervaizer start
+```
+
+5. Verify the endpoints:
+   - **API docs**: `http://localhost:8000/docs`
+   - **A2A discovery**: `http://localhost:8000/.well-known/agents.json`
+   - **Admin interface**: `http://localhost:8000/admin`
+
+6. For production deployment, see the [Cloud Deployment Guide](/docs/supervaizer-controller/deploy)
+
+## Supported Agent Frameworks
+
+The skill works with any Python AI agent, including:
+
+- **LangChain** / **LangGraph**
+- **CrewAI**
+- **AutoGen**
+- **OpenAI SDK**
+- **Anthropic SDK**
+- Custom Python agents
+
+Claude analyzes your specific code and adapts the generated files accordingly.
+
+## Human-in-the-Loop Support
+
+If you enable HITL during setup, the skill generates:
+
+- A `human_answer` agent method in `supervaizer_control.py`
+- A `handle_human_input()` function in `agent_impl.py`
+- Form field definitions for the Supervaize UI (approval toggles, text feedback, selections)
+- Case pause/resume logic that waits for human input
+
+The workflow:
+
+1. Agent reaches a HITL step and pauses the case
+2. Supervaize shows a form to the human operator
+3. The operator submits their decision
+4. The agent resumes and processes the response
+
+## Comparison with Manual Setup
+
+| Aspect | Manual Setup | Claude Code Skill |
+|---|---|---|
+| **Time** | 30-60 minutes reading docs + coding | 5-10 minutes answering questions |
+| **Knowledge required** | Supervaizer API, entity hierarchy, lifecycle patterns | None — Claude explains as it goes |
+| **Error risk** | Import paths, method signatures, field types | Validated automatically |
+| **Customization** | Full control from the start | Full control after generation |
+| **HITL setup** | Complex form/payload structure | Guided with examples |
+
+## Troubleshooting
+
+### Skill does not appear in Claude Code
+
+Check that the files exist at:
+- `.claude/skills/supervaizer-integrate.md`
+- `.claude/commands/supervaizer-integrate.md`
+
+### Import errors after generation
+
+```bash
+python -c "import supervaizer_control"
+```
+
+Common fixes:
+- Activate your virtual environment
+- Run `pip list | grep supervaizer` to confirm installation
+- Check that `__init__.py` exports the account object
+
+### Agent does not register with Supervaize
+
+1. Verify environment variables in `.envrc` are set (`SUPERVAIZE_API_KEY`, `SUPERVAIZE_WORKSPACE_ID`)
+2. For local development, set up [tunneling](/docs/supervaizer-controller/tunneling-setup) so Supervaize can reach your agent
+3. Check the server logs for registration errors
+
+## Best Practices
+
+- Run the skill on a **clean branch** so you can review the generated files before merging
+- Start with the **simplest configuration** (no HITL, single case) and add complexity later
+- Keep your original agent code **unchanged** — the generated files wrap it, they don't modify it
+- Use **uv** for faster dependency management
+- Review the generated `agent_impl.py` and customize the `process_case()` function to match your exact workflow
+
+## Reference
+
+- [<i className="bi bi-github"></i> Hello World example](https://github.com/supervaize/supervaize_hello_world) — reference project with the skill pre-installed
+- [<i className="bi bi-github"></i> Supervaizer package](https://github.com/supervaize/supervaizer) — the Python SDK
+- [Controller Setup Guide](/docs/supervaizer-controller/controller-setup) — manual setup reference
+- [Application Flow Control](/docs/supervaizer-controller/application-flow-control) — cases, steps, and HITL details
+- [Core Concepts](/docs/supervaizer-controller/core-concepts) — entity hierarchy and mental model
+- [Skills Cookbook: Supervaizer Integration Skill](/docs/skills-cookbook/claude-code-skill) — detailed skill architecture and phase breakdown
