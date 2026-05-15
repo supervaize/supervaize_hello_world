@@ -15,7 +15,7 @@ install:
 
 # Install dev dependencies
 install-dev:
-    uv sync --extra dev
+    uv sync --dev
 
 # After install-dev: use editable supervaizer from monorepo checkout (not for CI; path is relative to supervaize_hello_world/)
 use-local-supervaizer:
@@ -23,7 +23,7 @@ use-local-supervaizer:
 
 # Dev deps + local editable supervaizer
 install-dev-local:
-    uv sync --extra dev
+    uv sync --dev
     just use-local-supervaizer
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,4 +67,3 @@ vercel_redeploy:
 # Test locally with Vercel
 vercel_dev:
     vercel dev
-
