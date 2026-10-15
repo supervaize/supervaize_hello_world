@@ -9,19 +9,23 @@
 # and edited to configure your agent(s)
 
 import os
+
 import shortuuid
 from supervaizer import (
-    Agent,
-    AgentMethods,
-    Server,
     Account,
+    Agent,
     AgentMethod,
     AgentMethodField,
-    ParametersSetup,
+    AgentMethods,
     Parameter,
+    ParametersSetup,
+    Server,
 )
+
 from agent_data_resource import contacts_resource
 from agent_v2 import (
+    CONFIGURATOR_SURFACE,
+    CONFIGURE_ACTION,
     CONTACT_ACTIONS,
     build_human_loop_v2_registration,
     build_simple_agent_v2_registration,
@@ -170,12 +174,13 @@ sv_server: Server = Server(
 
 
 def _register_v2_handlers(server: Server) -> None:
-    server.register_v2_surface(
-        "job.start",
-        handle_simple_v2_surface,
-        agent_slug=simple_agent.slug,
-    )
-    for action in ("job.start.preview", "job.start", "job.sync", *CONTACT_ACTIONS):
+    for surface in ("job.start", CONFIGURATOR_SURFACE):
+        server.register_v2_surface(
+            surface,
+            handle_simple_v2_surface,
+            agent_slug=simple_agent.slug,
+        )
+    for action in ("job.start.preview", "job.start", "job.sync", CONFIGURE_ACTION, *CONTACT_ACTIONS):
         server.register_v2_action(
             action,
             handle_simple_v2_action,
