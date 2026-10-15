@@ -16,6 +16,7 @@ This project showcases all core Supervaizer concepts:
 ```
 supervaize_hello_world/
 ├── supervaizer_control.py   # Main controller configuration
+├── agent_v2.py              # Supervaizer v2 registration (SDK builder) and A2UI handlers
 ├── agent_simple.py          # Agent logic (job_start, job_stop, job_status)
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template

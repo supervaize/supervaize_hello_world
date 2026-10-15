@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from supervaizer.contracts import (
-    SUPERVAIZER_V2_A2A_VERSION,
     SUPERVAIZER_V2_A2UI_VERSION,
-    SUPERVAIZER_V2_CONTRACT_VERSION,
+    SupervaizerV2AgentRegistrationContract,
+    V2ActionDefinition,
+    build_v2_agent_registration,
 )
 
 from agent_data_resource import (
@@ -28,32 +29,44 @@ CONTACT_ACTIONS = [
     "resource.contacts.delete",
     "resource.contacts.import",
 ]
+# A bare action id is mutating=True (fail closed); the two read-only actions say so.
+# Resource operation ids are freeform, so the SDK cannot derive that list is read-only.
+_PREVIEW_ACTION = V2ActionDefinition(id="job.start.preview", mutating=False)
+_CONTACTS_LIST_ACTION = V2ActionDefinition(
+    id="resource.contacts.list", mutating=False, scope="workspace"
+)
 # Studio retries a scheduled firing with the same idempotency_key; it must get
 # the original job back, not a second one.
 # ponytail: in-memory, lost on restart; a real agent keys this on its job store
 _started_jobs: dict[str, dict[str, Any]] = {}
 
 
-def build_simple_agent_v2_registration(agent_version: str) -> dict[str, Any]:
+def build_simple_agent_v2_registration(
+    agent_version: str,
+) -> SupervaizerV2AgentRegistrationContract:
     """Return the v2 registration for the simple Hello World agent."""
     return _registration(
         agent_slug=SIMPLE_AGENT_SLUG,
         display_name="Hello World AI Agent",
         agent_version=agent_version,
-        actions=["job.start.preview", "job.start", "job.sync", *CONTACT_ACTIONS],
-        surfaces=["job.start", "mission.agent.resource.contacts"],
+        # The SDK derives the other contact actions and the contacts surface
+        # from the resource definition.
+        actions=[_PREVIEW_ACTION, "job.start", "job.sync", _CONTACTS_LIST_ACTION],
+        surfaces=["job.start"],
         resources=[_contacts_resource_definition()],
         scheduled_start=True,
     )
 
 
-def build_human_loop_v2_registration(agent_version: str) -> dict[str, Any]:
+def build_human_loop_v2_registration(
+    agent_version: str,
+) -> SupervaizerV2AgentRegistrationContract:
     """Return the v2 registration for the human-in-the-loop Hello World agent."""
     return _registration(
         agent_slug=HUMAN_LOOP_AGENT_SLUG,
         display_name="Human-in-the-Loop Agent",
         agent_version=agent_version,
-        actions=["job.start.preview", "job.start", "job.sync", "step.awaiting.submit"],
+        actions=[_PREVIEW_ACTION, "job.start", "job.sync", "step.awaiting.submit"],
         surfaces=["job.start", "case.step.awaiting"],
         resources=[],
     )
@@ -188,46 +201,32 @@ def _registration(
     agent_slug: str,
     display_name: str,
     agent_version: str,
-    actions: list[str],
+    actions: list[str | V2ActionDefinition],
     surfaces: list[str],
     resources: list[dict[str, Any]],
     scheduled_start: bool = False,
-) -> dict[str, Any]:
-    return {
-        "supervaizer_contract_version": SUPERVAIZER_V2_CONTRACT_VERSION,
-        "agent": {"id": agent_slug, "slug": agent_slug, "display_name": display_name},
-        "versions": {
-            "a2ui_version": SUPERVAIZER_V2_A2UI_VERSION,
-            "a2ui_catalog_version": A2UI_CATALOG_VERSION,
-            "a2a_version": SUPERVAIZER_V2_A2A_VERSION,
-            "ag_ui_version": None,
-        },
-        "a2a": {
-            "agent_card_url": f"/.well-known/agents/v{agent_version}/{agent_slug}_agent.json",
-            "controller_url": "/a2a",
-            "transport": {"json_rpc": True, "sse": True, "push_notifications": False},
-            "external_interop": {"inbound_tasks": False, "outbound_delegation": False},
-        },
-        "capabilities": {
-            "surfaces": surfaces,
-            "actions": actions,
-            "case_lanes": [{"id": "work", "label": "Work", "default": True}],
-            "artifact_types": [],
-            # Lets Studio start this agent on a cron schedule (Studio owns the
-            # clock and calls the normal job.start). Omitted on the wire when False.
-            "scheduled_start": scheduled_start,
-        },
-        "job_policy": {
-            "offline_start_policy": "block",
-            "offline_running_policy": "fail_in_studio",
+) -> SupervaizerV2AgentRegistrationContract:
+    return build_v2_agent_registration(
+        agent_slug=agent_slug,
+        display_name=display_name,
+        a2ui_catalog_version=A2UI_CATALOG_VERSION,
+        # The builder defaults to the unversioned card route; this example
+        # serves the versioned one.
+        agent_card_url=f"/.well-known/agents/v{agent_version}/{agent_slug}_agent.json",
+        surfaces=surfaces,
+        actions=actions,
+        resources=resources,
+        case_lanes=[{"id": "work", "label": "Work", "default": True}],
+        # Lets Studio start this agent on a cron schedule (Studio owns the
+        # clock and calls the normal job.start). Omitted on the wire when False.
+        scheduled_start=scheduled_start,
+        job_policy={
             "sync": {
                 "action": "job.sync",
                 "supported_statuses": ["active", "awaiting", "completed"],
-            },
+            }
         },
-        "resources": resources,
-        "datasets": [],
-    }
+    )
 
 
 def _contacts_resource_definition() -> dict[str, Any]:
