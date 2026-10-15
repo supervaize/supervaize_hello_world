@@ -38,6 +38,7 @@ from agent_v2 import (
 
 #### SIMPLE AGENT ####
 agent_name = "Hello World AI Agent"
+AGENT_VERSION = "1.2"  # keep equal to pyproject.toml; `just deploy` checks and tags it
 
 # Define the parameters and secrets expected by the agent
 simple_agent_parameters = ParametersSetup.from_list([
@@ -89,7 +90,7 @@ simple_agent: Agent = Agent(
     name=agent_name,
     id=shortuuid.uuid(f"{agent_name}"),
     author="Alain Prasquier <al1@supervaize.com>",  # Author of the agent
-    version="1.1",  # Version string
+    version=AGENT_VERSION,
     description="This is a test agent",
     tags=["hello world", "ai agent"],
     methods=AgentMethods(
@@ -99,7 +100,7 @@ simple_agent: Agent = Agent(
     ),
     parameters_setup=simple_agent_parameters,
     data_resources=[contacts_resource],
-    supervaizer_v2_registration=build_simple_agent_v2_registration("1.1"),
+    supervaizer_v2_registration=build_simple_agent_v2_registration(AGENT_VERSION),
 )
 
 

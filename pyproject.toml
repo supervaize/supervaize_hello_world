@@ -1,6 +1,6 @@
 [project]
 name = "supervaize-hello-world"
-version = "0.3.0"
+version = "1.2"
 description = "Hello World basic case - for integration of Supervaize agents."
 readme = "README.md"
 requires-python = ">=3.12"

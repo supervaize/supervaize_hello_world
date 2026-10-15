@@ -375,7 +375,7 @@
 
         <section class="api-section">
             <h2 class="api-section-title">Supervaizer API</h2>
-            <p class="api-version">Supervaizer version <span id="version">—</span> · API version <span
+            <p class="api-version">Agent version <span id="agent_version">—</span> · Supervaizer version <span id="version">—</span> · API version <span
                     id="api_version">—</span></p>
 
             <div class="cards cards--single">
@@ -405,6 +405,7 @@
                 if (debugEl) debugEl.textContent = ctx != null ? JSON.stringify(ctx, null, 2) : "(failed to load /api/context)";
                 if (!ctx) return;
                 var set = function (id, val) { var el = document.getElementById(id); if (el) el.textContent = val || "—"; };
+                set("agent_version", ctx.agent_version);
                 set("version", ctx.version);
                 set("api_version", ctx.api_version);
                 set("base", ctx.base);
