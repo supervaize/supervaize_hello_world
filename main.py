@@ -1,6 +1,6 @@
 from supervaizer.server import API_VERSION, VERSION
 
-from supervaizer_control import app, sv_server
+from supervaizer_control import AGENT_VERSION, app, sv_server
 
 # Expose the FastAPI app instance
 __all__ = ["app"]
@@ -14,6 +14,7 @@ def api_context() -> dict:
         or f"{sv_server.scheme}://{sv_server.host}:{sv_server.port}"
     )
     return {
+        "agent_version": AGENT_VERSION,
         "version": VERSION,
         "api_version": API_VERSION,
         "base": base,
