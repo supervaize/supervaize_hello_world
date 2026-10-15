@@ -87,7 +87,7 @@ simple_agent: Agent = Agent(
     name=agent_name,
     id=shortuuid.uuid(f"{agent_name}"),
     author="Alain Prasquier <al1@supervaize.com>",  # Author of the agent
-    version="1.0",  # Version string
+    version="1.1",  # Version string
     description="This is a test agent",
     tags=["hello world", "ai agent"],
     methods=AgentMethods(
@@ -97,7 +97,7 @@ simple_agent: Agent = Agent(
     ),
     parameters_setup=simple_agent_parameters,
     data_resources=[contacts_resource],
-    supervaizer_v2_registration=build_simple_agent_v2_registration("1.0"),
+    supervaizer_v2_registration=build_simple_agent_v2_registration("1.1"),
 )
 
 
