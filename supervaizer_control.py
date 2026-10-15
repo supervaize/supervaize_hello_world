@@ -22,10 +22,9 @@ from supervaizer import (
     Server,
 )
 
+from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION
 from agent_data_resource import contacts_resource
 from agent_v2 import (
-    CONFIGURATOR_SURFACE,
-    CONFIGURE_ACTION,
     CONTACT_ACTIONS,
     build_human_loop_v2_registration,
     build_simple_agent_v2_registration,

@@ -17,6 +17,7 @@ This project showcases all core Supervaizer concepts:
 supervaize_hello_world/
 ├── supervaizer_control.py   # Main controller configuration
 ├── agent_v2.py              # Supervaizer v2 registration (SDK builder) and A2UI handlers
+├── agent_configurator.py    # Job Configurator A2UI surface example
 ├── agent_simple.py          # Agent logic (job_start, job_stop, job_status)
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template
@@ -101,7 +102,7 @@ See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10
 
 ## Job Configurator
 
-The `simple_agent` also declares the `job.configurator` surface (`agent_v2.py`). Studio renders it on the job page as an A2UI `Configurator` document: one editable section with a greeting field. Saving invokes the bound `job.configure` action with `{"revision": ..., "value": {"greeting": ...}}`. A save made from a stale revision gets `configurator.conflict` back and Studio reloads the document. The saved greeting names the job's cases.
+The `simple_agent` also declares the `job.configurator` surface (`agent_configurator.py`). Studio renders it on the job page as an A2UI `Configurator` document: one editable section with a greeting field. Saving invokes the bound `job.configure` action with `{"revision": ..., "value": {"greeting": ...}}`. A save made from a stale revision gets `configurator.conflict` back and Studio reloads the document. The saved greeting names the job's cases.
 
 ## Testing the Agent
 

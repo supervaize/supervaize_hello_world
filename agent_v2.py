@@ -11,6 +11,13 @@ from supervaizer.contracts import (
     build_v2_agent_registration,
 )
 
+from agent_configurator import (
+    CONFIGURATOR_SURFACE,
+    CONFIGURE_ACTION,
+    configurator_document,
+    configure,
+    greeting,
+)
 from agent_data_resource import (
     _create_contact,
     _delete_contact,
@@ -35,17 +42,10 @@ _PREVIEW_ACTION = V2ActionDefinition(id="job.start.preview", mutating=False)
 _CONTACTS_LIST_ACTION = V2ActionDefinition(
     id="resource.contacts.list", mutating=False, scope="workspace"
 )
-CONFIGURATOR_SURFACE = "job.configurator"
-CONFIGURE_ACTION = "job.configure"
-DEFAULT_GREETING = "Hello"
 # Studio retries a scheduled firing with the same idempotency_key; it must get
 # the original job back, not a second one.
 # ponytail: in-memory, lost on restart; a real agent keys this on its job store
 _started_jobs: dict[str, dict[str, Any]] = {}
-# Per-job greeting edited in Studio's Job Configurator. A save must quote the
-# revision it was made from, so two operators cannot silently overwrite each other.
-# ponytail: in-memory, lost on restart; a real agent keys this on its job store
-_job_configs: dict[str, dict[str, str]] = {}
 
 
 def build_simple_agent_v2_registration(
@@ -89,7 +89,7 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
     """Load the simple agent's A2UI job-start or configurator surface."""
     data = _request_dict(request)
     if data.get("surface") == CONFIGURATOR_SURFACE:
-        return _surface_result(data, _configurator_document(data))
+        return _surface_result(data, configurator_document(_job_id(data), _input(data)))
     return _surface_result(
         data,
         {
@@ -180,7 +180,7 @@ def handle_simple_v2_action(request: Any) -> dict[str, Any]:
             job_state=_simple_job_state(data, count=count, status="completed"),
         )
     if action == CONFIGURE_ACTION:
-        return _configure(data)
+        return configure(_job_id(data), _input(data))
     if action.startswith("resource.contacts."):
         return _handle_contacts_action(action, _input(data))
     return _error("action.unsupported", action=action)
@@ -211,89 +211,6 @@ def handle_human_loop_v2_action(request: Any) -> dict[str, Any]:
             job_state=job_state,
         )
     return _error("action.unsupported", action=action)
-
-
-def _configurator_document(data: dict[str, Any]) -> dict[str, Any]:
-    """A2UI Configurator for the simple agent: one editable section, one field.
-
-    Studio renders this on the job page when the agent declares the
-    ``job.configurator`` surface. A section's ``save`` binding names the action
-    Studio invokes with ``{"revision": ..., "value": {...field values}}``.
-    """
-    supported = _input(data).get("supported_schema_versions") or ["1"]
-    if "1" not in supported:
-        return {
-            "type": "ConfiguratorError",
-            "code": "unsupported_schema",
-            "message": "Studio and agent do not share a Configurator schema version.",
-            "supported_schema_versions": ["1"],
-        }
-    config = _job_config(_job_id(data))
-    return {
-        "type": "Configurator",
-        "id": "hello_world.configurator",
-        "schema_version": "1",
-        "revision": config["revision"],
-        "title": "Hello World setup",
-        "sections": [
-            {
-                "id": "greeting",
-                "label": "Greeting",
-                "policy": "editable",
-                "component": {
-                    "type": "Form",
-                    "id": "hello_world.greeting",
-                    "data": {
-                        "fields": [
-                            {
-                                "id": "greeting",
-                                "label": "Greeting",
-                                "type": "text",
-                                "required": True,
-                                "default": config["greeting"],
-                            }
-                        ],
-                        "save_label": "Save greeting",
-                    },
-                    "bindings": {
-                        "save": {
-                            "action_id": CONFIGURE_ACTION,
-                            "target_scope": "job",
-                            "payload_source": "component",
-                        }
-                    },
-                },
-            }
-        ],
-        "readiness": [
-            {"id": "greeting", "label": "Greeting is set", "status": "ok", "section_id": "greeting"}
-        ],
-        "primary_action": None,
-    }
-
-
-def _configure(data: dict[str, Any]) -> dict[str, Any]:
-    """Save the greeting; refuse a save made from a revision that is no longer current."""
-    job_id = _job_id(data)
-    config = _job_config(job_id)
-    payload = _input(data)
-    if payload.get("revision") != config["revision"]:
-        return _error(
-            "configurator.conflict",
-            message="Configurator changed; reload required",
-            current_revision=config["revision"],
-        )
-    value = payload.get("value")
-    greeting = str((value if isinstance(value, dict) else {}).get("greeting") or "").strip()
-    if not greeting:
-        return _error("job.configure.failed", message="Greeting is required")
-    revision = str(int(config["revision"]) + 1)
-    _job_configs[job_id] = {"greeting": greeting, "revision": revision}
-    return _ok("job.configured", job_id=job_id, greeting=greeting, revision=revision)
-
-
-def _job_config(job_id: str) -> dict[str, str]:
-    return _job_configs.get(job_id) or {"greeting": DEFAULT_GREETING, "revision": "0"}
 
 
 def _registration(
@@ -399,7 +316,7 @@ def _simple_job_state(data: dict[str, Any], *, count: int, status: str) -> dict[
             {
                 "id": f"{job_id}-case-{index}",
                 "lane": "work",
-                "title": f"{_job_config(job_id)['greeting']} case {index}",
+                "title": f"{greeting(job_id)} case {index}",
                 "status": status,
                 "steps": [
                     {
