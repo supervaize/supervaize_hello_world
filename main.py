@@ -1,5 +1,6 @@
+from supervaizer.server import API_VERSION, VERSION
+
 from supervaizer_control import app, sv_server
-from supervaizer.__version__ import API_VERSION, VERSION
 
 # Expose the FastAPI app instance
 __all__ = ["app"]
