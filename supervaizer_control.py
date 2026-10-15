@@ -22,6 +22,7 @@ from supervaizer import (
     Server,
 )
 
+import agent_rules
 from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION
 from agent_dashboard import ANALYTICS_SURFACE, DATASET_QUERY_ACTION
 from agent_data_resource import contacts_resource
@@ -185,6 +186,9 @@ def _register_v2_handlers(server: Server) -> None:
         "job.start",
         "job.sync",
         "step.awaiting.submit",
+        # Replaces the SDK default resume handler, which only wakes an
+        # in-process SDK Case gate; this agent keeps its gates in agent_rules.
+        agent_rules.RESUME_ACTION,
         CONFIGURE_ACTION,
         DATASET_QUERY_ACTION,
         *CONTACT_ACTIONS,
@@ -214,6 +218,8 @@ def _register_v2_handlers(server: Server) -> None:
 
 
 _register_v2_handlers(sv_server)
+# The rule checkpoint gate posts to Studio with the supervisor account.
+agent_rules.account = sv_server.supervisor_account
 
 
 # Expose the FastAPI app instance for deployment

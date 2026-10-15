@@ -12,6 +12,7 @@ from supervaizer.contracts import (
     build_v2_agent_registration,
 )
 
+import agent_rules
 from agent_configurator import (
     CONFIGURATOR_SURFACE,
     CONFIGURE_ACTION,
@@ -91,6 +92,9 @@ def build_simple_agent_v2_registration(
         # The SDK derives dataset.hello_cases.query and the dataset surface.
         datasets=[dataset_definition()],
         scheduled_start=True,
+        # Lets Studio start this agent in a mission with rules; the SDK adds
+        # the rule.checkpoint.resume action (job scope) that Studio requires.
+        rule_checkpoints={"phases": agent_rules.PHASES},
     )
 
 
@@ -173,7 +177,7 @@ def handle_human_loop_v2_surface(request: Any) -> dict[str, Any]:
     )
 
 
-def handle_simple_v2_action(request: Any) -> dict[str, Any]:
+async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
     """Dispatch v2 actions for the simple Hello World agent."""
     data = _request_dict(request)
     action = str(data.get("action") or "")
@@ -187,21 +191,33 @@ def handle_simple_v2_action(request: Any) -> dict[str, Any]:
         with_human = _flag(data, "add_human_in_the_loop")
         job_state = _simple_job_state(data, count=count, with_human=with_human)
         _jobs[job_state["job"]["id"]] = job_state
+        message = _start_message(count, data.get("schedule"), with_human)
+        if agent_rules.governed(data):
+            # Studio knows the cases only after this response, so the rule
+            # checkpoints run on the first job.sync.
+            agent_rules.open_gate(data, job_state)
+            message = f"{count} hello case(s) held for Studio rule checkpoints"
         result = _ok(
             "job.started",
             job_id=job_state["job"]["id"],
             status=job_state["job"]["status"],
-            message=_start_message(count, data.get("schedule"), with_human),
+            message=message,
             job_state=job_state,
         )
         if idempotency_key:
             _started_jobs[idempotency_key] = result
         return result
     if action == "job.sync":
-        job_state = _jobs.get(_job_id(data)) or _simple_job_state(
+        try:
+            job_state = await agent_rules.sync(_job_id(data))
+        except RuntimeError as error:  # Studio refused or lost a checkpoint call
+            return _error("job.sync.failed", job_id=_job_id(data), message=str(error))
+        job_state = job_state or _jobs.get(_job_id(data)) or _simple_job_state(
             data, count=_count(data, default=1), with_human=False
         )
         return _ok("job.synced", job_state=job_state)
+    if action == agent_rules.RESUME_ACTION:
+        return await _resume_rule_checkpoint(data)
     if action == AWAITING_SUBMIT_ACTION:
         job_state = _submit_review(data)
         return _ok(
@@ -257,6 +273,7 @@ def _registration(
     resources: list[dict[str, Any]],
     datasets: list[dict[str, Any]] = (),
     scheduled_start: bool = False,
+    rule_checkpoints: dict[str, Any] | None = None,
 ) -> SupervaizerV2AgentRegistrationContract:
     return build_v2_agent_registration(
         agent_slug=agent_slug,
@@ -273,6 +290,7 @@ def _registration(
         # Lets Studio start this agent on a cron schedule (Studio owns the
         # clock and calls the normal job.start). Omitted on the wire when False.
         scheduled_start=scheduled_start,
+        rule_checkpoints=rule_checkpoints,
         job_policy={
             "sync": {
                 "action": "job.sync",
@@ -430,10 +448,25 @@ def _submit_review(data: dict[str, Any]) -> dict[str, Any]:
     for case in job_state["cases"]:
         if case["id"] == case_id:
             _complete_review(case, _input(data))
-    if all(case["status"] != "awaiting" for case in job_state["cases"]):
+    if all(case["status"] == "completed" for case in job_state["cases"]):
         job_state["job"]["status"] = "completed"
     _jobs[job_id] = job_state
     return job_state
+
+
+async def _resume_rule_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
+    """Apply Studio's checkpoint decision; a decision for another gate fails closed."""
+    try:
+        job_state = await agent_rules.resume(data)
+    except (ValueError, RuntimeError) as error:  # ValidationError is a ValueError
+        return _error("rule.checkpoint.rejected", job_id=data.get("job_id"), message=str(error))
+    _jobs[job_state["job"]["id"]] = job_state
+    return _ok(
+        "rule.checkpoint.resumed",
+        job_id=job_state["job"]["id"],
+        status=job_state["job"]["status"],
+        job_state=job_state,
+    )
 
 
 def _awaiting_document(data: dict[str, Any]) -> dict[str, Any]:
