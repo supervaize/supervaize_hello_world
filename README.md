@@ -16,6 +16,8 @@ This project showcases all core Supervaizer concepts:
 ```
 supervaize_hello_world/
 ├── supervaizer_control.py   # Main controller configuration
+├── agent_v2.py              # Supervaizer v2 registration (SDK builder) and A2UI handlers
+├── agent_configurator.py    # Job Configurator A2UI surface example
 ├── agent_simple.py          # Agent logic (job_start, job_stop, job_status)
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template
@@ -87,7 +89,24 @@ Run E2E tests with:
 just test
 ```
 
+## Scheduled Starts
+
+The `simple_agent` advertises `capabilities.scheduled_start: true` in its v2 registration (`agent_v2.py`). With that flag a Studio mission manager can start the agent on a cron schedule (Studio job scheduling, PR #917).
+
+The agent does not run a clock or parse cron. Studio owns the schedule and calls the normal `job.start` action when a firing is due, with:
+
+- a stable `idempotency_key` per occurrence. The agent returns the original job on a retry instead of starting a second one (`_started_jobs` in `agent_v2.py`).
+- a top-level `schedule` object (`schedule_id`, `schedule_name`, `run_id`, `run_number`, `occurrence_at`, `trigger`, `cron_expression`, `timezone`, `error_policy`). The agent only names it in its result message.
+
+See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10_SCHEDULED_START.md`.
+
+## Job Configurator
+
+The `simple_agent` also declares the `job.configurator` surface (`agent_configurator.py`). Studio renders it on the job page as an A2UI `Configurator` document: one editable section with a greeting field. Saving invokes the bound `job.configure` action with `{"revision": ..., "value": {"greeting": ...}}`. A save made from a stale revision gets `configurator.conflict` back and Studio reloads the document. The saved greeting names the job's cases.
+
 ## Testing the Agent
+
+The E2E tests play Studio: `tests/conftest.py` installs a throwaway Ed25519 key on the server and signs a workspace token per agent, because Supervaizer 1.x fail-closes A2A and data-resource calls without one.
 
 ```bash
 # Check agent health

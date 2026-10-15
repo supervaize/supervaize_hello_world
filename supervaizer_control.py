@@ -9,18 +9,30 @@
 # and edited to configure your agent(s)
 
 import os
+
 import shortuuid
 from supervaizer import (
-    Agent,
-    AgentMethods,
-    Server,
     Account,
+    Agent,
     AgentMethod,
     AgentMethodField,
-    ParametersSetup,
+    AgentMethods,
     Parameter,
+    ParametersSetup,
+    Server,
 )
+
+from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION
 from agent_data_resource import contacts_resource
+from agent_v2 import (
+    CONTACT_ACTIONS,
+    build_human_loop_v2_registration,
+    build_simple_agent_v2_registration,
+    handle_human_loop_v2_action,
+    handle_human_loop_v2_surface,
+    handle_simple_v2_action,
+    handle_simple_v2_surface,
+)
 
 #### SIMPLE AGENT ####
 agent_name = "Hello World AI Agent"
@@ -85,6 +97,7 @@ simple_agent: Agent = Agent(
     ),
     parameters_setup=simple_agent_parameters,
     data_resources=[contacts_resource],
+    supervaizer_v2_registration=build_simple_agent_v2_registration("1.0"),
 )
 
 
@@ -139,6 +152,7 @@ human_loop_agent: Agent = Agent(
         job_status=human_loop_job_status,
         human_answer=human_loop_human_answer,
     ),
+    supervaizer_v2_registration=build_human_loop_v2_registration("1.0"),
 )
 
 
@@ -156,6 +170,41 @@ sv_server: Server = Server(
     a2a_endpoints=True,  # Enable A2A endpoints
     supervisor_account=supervaize_account,  # Account from Supervaize
 )
+
+
+def _register_v2_handlers(server: Server) -> None:
+    for surface in ("job.start", CONFIGURATOR_SURFACE):
+        server.register_v2_surface(
+            surface,
+            handle_simple_v2_surface,
+            agent_slug=simple_agent.slug,
+        )
+    for action in ("job.start.preview", "job.start", "job.sync", CONFIGURE_ACTION, *CONTACT_ACTIONS):
+        server.register_v2_action(
+            action,
+            handle_simple_v2_action,
+            agent_slug=simple_agent.slug,
+        )
+
+    server.register_v2_surface(
+        "job.start",
+        handle_human_loop_v2_surface,
+        agent_slug=human_loop_agent.slug,
+    )
+    server.register_v2_surface(
+        "case.step.awaiting",
+        handle_human_loop_v2_surface,
+        agent_slug=human_loop_agent.slug,
+    )
+    for action in ("job.start.preview", "job.start", "job.sync", "step.awaiting.submit"):
+        server.register_v2_action(
+            action,
+            handle_human_loop_v2_action,
+            agent_slug=human_loop_agent.slug,
+        )
+
+
+_register_v2_handlers(sv_server)
 
 
 # Expose the FastAPI app instance for deployment
