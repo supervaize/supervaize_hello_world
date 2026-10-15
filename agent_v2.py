@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from supervaizer.contracts import (
+    SUPERVAIZER_V2_A2A_VERSION,
+    SUPERVAIZER_V2_A2UI_VERSION,
+    SUPERVAIZER_V2_CONTRACT_VERSION,
+)
+
 from agent_data_resource import (
     _create_contact,
     _delete_contact,
     _import_contacts,
     _list_contacts,
     _update_contact,
-)
-from supervaizer.contracts import (
-    SUPERVAIZER_V2_A2A_VERSION,
-    SUPERVAIZER_V2_A2UI_VERSION,
-    SUPERVAIZER_V2_CONTRACT_VERSION,
 )
 
 SIMPLE_AGENT_SLUG = "hello-world-ai-agent"
@@ -27,6 +28,10 @@ CONTACT_ACTIONS = [
     "resource.contacts.delete",
     "resource.contacts.import",
 ]
+# Studio retries a scheduled firing with the same idempotency_key; it must get
+# the original job back, not a second one.
+# ponytail: in-memory, lost on restart; a real agent keys this on its job store
+_started_jobs: dict[str, dict[str, Any]] = {}
 
 
 def build_simple_agent_v2_registration(agent_version: str) -> dict[str, Any]:
@@ -38,6 +43,7 @@ def build_simple_agent_v2_registration(agent_version: str) -> dict[str, Any]:
         actions=["job.start.preview", "job.start", "job.sync", *CONTACT_ACTIONS],
         surfaces=["job.start", "mission.agent.resource.contacts"],
         resources=[_contacts_resource_definition()],
+        scheduled_start=True,
     )
 
 
@@ -124,15 +130,21 @@ def handle_simple_v2_action(request: Any) -> dict[str, Any]:
     if action == "job.start.preview":
         return _ok("job.start.previewed", count=_count(data, default=3))
     if action == "job.start":
+        idempotency_key = data.get("idempotency_key")
+        if idempotency_key in _started_jobs:
+            return _started_jobs[idempotency_key]
         count = _count(data, default=3)
         job_state = _simple_job_state(data, count=count, status="completed")
-        return _ok(
+        result = _ok(
             "job.started",
             job_id=job_state["job"]["id"],
             status="completed",
-            message=f"Completed {count} hello case(s)",
+            message=_start_message(count, data.get("schedule")),
             job_state=job_state,
         )
+        if idempotency_key:
+            _started_jobs[idempotency_key] = result
+        return result
     if action == "job.sync":
         count = _count(data, default=1)
         return _ok(
@@ -179,6 +191,7 @@ def _registration(
     actions: list[str],
     surfaces: list[str],
     resources: list[dict[str, Any]],
+    scheduled_start: bool = False,
 ) -> dict[str, Any]:
     return {
         "supervaizer_contract_version": SUPERVAIZER_V2_CONTRACT_VERSION,
@@ -200,6 +213,9 @@ def _registration(
             "actions": actions,
             "case_lanes": [{"id": "work", "label": "Work", "default": True}],
             "artifact_types": [],
+            # Lets Studio start this agent on a cron schedule (Studio owns the
+            # clock and calls the normal job.start). Omitted on the wire when False.
+            "scheduled_start": scheduled_start,
         },
         "job_policy": {
             "offline_start_policy": "block",
@@ -380,6 +396,15 @@ def _ok(effect_type: str, **effect: Any) -> dict[str, Any]:
 
 def _error(effect_type: str, **effect: Any) -> dict[str, Any]:
     return {"status": "error", "effects": [{"type": effect_type, **effect}]}
+
+
+def _start_message(count: int, schedule: Any) -> str:
+    """Name the Studio schedule when the start was a scheduled firing."""
+    message = f"Completed {count} hello case(s)"
+    if isinstance(schedule, dict):
+        name = schedule.get("schedule_name") or schedule.get("schedule_id")
+        message += f" for schedule {name} (run {schedule.get('run_number')})"
+    return message
 
 
 def _count(data: dict[str, Any], *, default: int, field: str = "count") -> int:

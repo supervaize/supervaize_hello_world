@@ -145,7 +145,7 @@ def test_agent_registration_info_includes_contacts_resource():
     v2 = info["supervaizer_v2"]
     assert v2["versions"]["a2ui_version"] == "v0.8"
     assert "job.start" in v2["capabilities"]["surfaces"]
-    assert "resource.contacts.list" in v2["capabilities"]["actions"]
+    assert "resource.contacts.list" in [a["id"] for a in v2["capabilities"]["actions"]]
     assert v2["resources"][0]["id"] == "contacts"
 
 
@@ -225,11 +225,11 @@ def test_a2a_lists_contacts_resource(client):
     assert effect["count"] == 2
 
 
-def test_a2a_human_loop_start_returns_awaiting_step(client):
+def test_a2a_human_loop_start_returns_awaiting_step(human_loop_client):
     """The v2 HITL demo exposes awaiting state instead of supervaizer_form HTML."""
     from supervaizer_control import human_loop_agent
 
-    response = client.post(
+    response = human_loop_client.post(
         "/a2a",
         json=_a2a_request(
             method="supervaizer/action.invoke",

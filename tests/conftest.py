@@ -1,9 +1,26 @@
 # supervaize_hello_world/tests/conftest.py
-"""Shared fixtures for hello-world E2E tests."""
+"""Shared fixtures for hello-world E2E tests.
+
+Supervaizer 1.x fail-closes A2A and data-resource calls behind a Studio-signed
+workspace token. These fixtures play Studio: they install a throwaway Ed25519
+public key on the server and sign one token per agent.
+"""
+import base64
+import json
+import time
+
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi.testclient import TestClient
+from supervaizer.contracts import V2WorkspaceAuthorizationSettings
+from supervaizer.workspace_authorization import WORKSPACE_AUTHORIZATION_HEADER
 
 import agent_data_resource as _dr_module
+
+ISSUER = "https://studio.example.test"
+WORKSPACE = {"id": "workspace-1", "slug": "workspace"}
+RESOURCE_OPERATIONS = ("list", "get", "create", "update", "delete", "import")
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +41,88 @@ def api_key():
 
 
 @pytest.fixture(scope="session")
-def client(api_key):
-    """FastAPI TestClient authenticated with the server API key."""
+def studio_key():
+    """Enable workspace authorization on the server with a throwaway Studio key."""
     from supervaizer_control import sv_server
-    with TestClient(sv_server.app) as c:
-        c.headers.update({"X-API-Key": api_key})
+
+    key = ed25519.Ed25519PrivateKey.generate()
+    pem = key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode()
+    sv_server.workspace_authorization = V2WorkspaceAuthorizationSettings(
+        enabled=True, issuer=ISSUER, public_key_pem=pem, leeway_seconds=0
+    )
+    for agent in sv_server.agents:  # Studio assigns this id at registration
+        agent.server_agent_id = f"studio-{agent.slug}"
+    return key
+
+
+@pytest.fixture(scope="session")
+def client(studio_key):
+    """FastAPI TestClient authorized as Studio for the simple agent."""
+    from supervaizer_control import simple_agent
+    with _studio_client(simple_agent, studio_key) as c:
         yield c
+
+
+@pytest.fixture(scope="session")
+def human_loop_client(studio_key):
+    """FastAPI TestClient authorized as Studio for the human-in-the-loop agent."""
+    from supervaizer_control import human_loop_agent
+    with _studio_client(human_loop_agent, studio_key) as c:
+        yield c
+
+
+def _studio_client(agent, key) -> TestClient:
+    from supervaizer_control import sv_server
+
+    client = TestClient(sv_server.app)
+    client.headers.update({
+        "X-API-Key": sv_server.api_key,
+        WORKSPACE_AUTHORIZATION_HEADER: f"Bearer {_workspace_token(agent, key)}",
+        "X-Supervaize-Workspace-Id": WORKSPACE["id"],
+        "X-Supervaize-Workspace-Slug": WORKSPACE["slug"],
+    })
+    return client
+
+
+def _workspace_token(agent, key) -> str:
+    """EdDSA JWT granting every action, surface and resource operation of the agent."""
+    from supervaizer_control import sv_server
+
+    registration = agent.supervaizer_v2_registration
+    scopes = [
+        "supervaizer/action.invoke",
+        "supervaizer/surface.load",
+        *(action.id for action in registration.capabilities.actions),
+        *registration.capabilities.surfaces,
+        *(f"resource.{r.name}.{op}" for r in agent.data_resources or [] for op in RESOURCE_OPERATIONS),
+    ]
+    now = int(time.time())
+    claims = {
+        "iss": ISSUER,
+        "aud": f"supervaizer-server:{sv_server.server_id}",
+        "sub": "workspace-agent-grant:grant-1",
+        "grant_id": "grant-1",
+        "workspace_id": WORKSPACE["id"],
+        "workspace_slug": WORKSPACE["slug"],
+        "agent_id": agent.server_agent_id or agent.id,
+        "agent_slug": agent.slug,
+        "server_id": sv_server.server_id,
+        "scopes": scopes,
+        "agent_workspace_ref": "agent-workspace-1",
+        "iat": now,
+        "exp": now + 3600,
+        "jti": "token-1",
+    }
+    header = {"alg": "EdDSA", "typ": "JWT"}
+    signing_input = f"{_b64_json(header)}.{_b64_json(claims)}"
+    return f"{signing_input}.{_b64(key.sign(signing_input.encode('ascii')))}"
+
+
+def _b64_json(value: dict) -> str:
+    return _b64(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+
+
+def _b64(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
