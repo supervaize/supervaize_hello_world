@@ -35,6 +35,20 @@ start:
     set -euo pipefail
     supervaizer start --port 3000 --local
 
+# Needs SUPERVAIZE_API_URL / SUPERVAIZE_API_KEY / SUPERVAIZE_WORKSPACE_ID in the env.
+# A Studio running in Docker on this machine calls back through host.docker.internal.
+# Set SUPERVAIZER_SERVER_ID to the id Studio already knows, or each run registers a new server and agent.
+# SUPERVAIZER_WORKSPACE_AUTH_ISSUER is the Studio SPA origin (the Developer page shows it).
+# Run with Studio registration (`just start` is local mode: it never registers)
+start-studio port="8001":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export SUPERVAIZER_LOCAL_MODE=false
+    export SUPERVAIZER_WORKSPACE_AUTH_REQUIRED=true
+    export SUPERVAIZER_WORKSPACE_AUTH_ISSUER="${SUPERVAIZER_WORKSPACE_AUTH_ISSUER:-https://studio.supervaize.com}"
+    export SUPERVAIZER_WORKSPACE_AUTH_JWKS_URL="${SUPERVAIZER_WORKSPACE_AUTH_JWKS_URL:-${SUPERVAIZE_API_URL%/}/api/v1/teams/${SUPERVAIZE_WORKSPACE_ID}/workspace-agent-grants/jwks/}"
+    uv run supervaizer start --port {{port}} --public-url "http://host.docker.internal:{{port}}"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Testing
 # ─────────────────────────────────────────────────────────────────────────────

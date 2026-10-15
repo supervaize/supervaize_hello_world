@@ -63,6 +63,15 @@ supervaizer start
 
 Your agent will be available at `http://localhost:8000`.
 
+`supervaizer start --local` (what `just start` runs) never registers with Studio. To register the agent with a Studio, load the Studio env (`SUPERVAIZE_API_URL`, `SUPERVAIZE_API_KEY`, `SUPERVAIZE_WORKSPACE_ID`) and run:
+
+```bash
+just start-studio
+```
+
+It listens on port 8001 and registers `http://host.docker.internal:8001`, which a Studio running in Docker on this machine can call back. Set `SUPERVAIZER_SERVER_ID` to the server id Studio already knows for this agent; otherwise each run registers a new server and a new agent.
+Workspace authorization is required for a Studio-registered controller: the recipe derives the JWKS URL from the Studio env and uses `https://studio.supervaize.com` as the issuer. Set `SUPERVAIZER_WORKSPACE_AUTH_ISSUER` to your Studio's SPA origin (shown on its Developer page) when it is not production.
+
 ## Available Endpoints
 
 Once running, you can access:
