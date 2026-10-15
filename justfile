@@ -61,6 +61,20 @@ vercel_add_env:
     printf '%s' "$SUPERVAIZER_SCHEME" | vercel env add SUPERVAIZER_SCHEME production --force
     printf '%s' "$SUPERVAIZE_PUBLIC_URL" | vercel env add SUPERVAIZE_PUBLIC_URL production --force
 
+# Tag v<version> on origin/main, push the tag, then deploy to Vercel production
+deploy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(uv version --short)"
+    git fetch -q origin
+    # The deployed tree must be exactly origin/main, so the tag points at what is live.
+    git diff --quiet origin/main || { echo "Working tree differs from origin/main: merge the PR and run 'but pull' first"; exit 1; }
+    grep -q "AGENT_VERSION = \"$version\"" supervaizer_control.py || { echo "AGENT_VERSION in supervaizer_control.py is not $version"; exit 1; }
+    git tag -a "v$version" -m "v$version" origin/main
+    git push origin "v$version"
+    vercel --prod
+
+# Redeploy the current version without a new tag
 vercel_redeploy:
     vercel --prod
 

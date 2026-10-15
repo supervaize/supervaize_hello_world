@@ -183,6 +183,14 @@ npm i -g vercel
 vercel
 ```
 
+### Release a new version
+
+1. Set the version in `pyproject.toml` (`uv version 1.3`) and `AGENT_VERSION` in `supervaizer_control.py`.
+2. Merge the change into `main` and run `but pull`.
+3. Run `just deploy`: it tags `v<version>` on `origin/main`, pushes the tag, then runs `vercel --prod`.
+
+`just vercel_redeploy` redeploys the current version without a new tag.
+
 For more information, see the [Vercel Python Runtime documentation](https://vercel.com/docs/concepts/functions/serverless-functions/runtimes/python).
 
 ## Troubleshooting
