@@ -46,4 +46,6 @@ def test_configurator_saves_greeting_and_rejects_stale_revision(client):
     assert stale["effects"][0]["type"] == "configurator.conflict"
 
     started = _invoke(client, slug, "job.start", {"count": 1})
-    assert started["effects"][0]["job_state"]["cases"][0]["title"] == "Bonjour case 1"
+    case = started["effects"][0]["job_state"]["cases"][0]
+    assert case["title"].startswith("Bonjour ")
+    assert case["metadata"]["message"].startswith("Bonjour, ")

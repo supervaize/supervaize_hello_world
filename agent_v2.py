@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 from supervaizer.contracts import (
@@ -16,7 +17,14 @@ from agent_configurator import (
     CONFIGURE_ACTION,
     configurator_document,
     configure,
-    greeting,
+    job_config,
+)
+from agent_dashboard import (
+    ANALYTICS_SURFACE,
+    DATASET_QUERY_ACTION,
+    analytics_document,
+    dataset_definition,
+    query_dataset,
 )
 from agent_data_resource import (
     _create_contact,
@@ -42,10 +50,22 @@ _PREVIEW_ACTION = V2ActionDefinition(id="job.start.preview", mutating=False)
 _CONTACTS_LIST_ACTION = V2ActionDefinition(
     id="resource.contacts.list", mutating=False, scope="workspace"
 )
+AWAITING_SURFACE = "case.step.awaiting"
+AWAITING_SUBMIT_ACTION = "step.awaiting.submit"
+AWAITING_FIELDS = [
+    {"id": "approved", "label": "Approved", "type": "boolean", "required": True},
+    {"id": "comment", "label": "Comment", "type": "text"},
+]
+# Random case content, so every run looks different in Studio.
+NAMES = ("Ada", "Grace", "Linus", "Margaret", "Alan", "Hedy")
+CITIES = ("Paris", "Lisbon", "Nairobi", "Kyoto", "Montréal", "Tallinn")
 # Studio retries a scheduled firing with the same idempotency_key; it must get
 # the original job back, not a second one.
 # ponytail: in-memory, lost on restart; a real agent keys this on its job store
 _started_jobs: dict[str, dict[str, Any]] = {}
+# Per-job state, so job.sync and step.awaiting.submit see what job.start created.
+# ponytail: in-memory; after a restart the submit rebuilds the review case from ids
+_jobs: dict[str, dict[str, Any]] = {}
 
 
 def build_simple_agent_v2_registration(
@@ -62,11 +82,14 @@ def build_simple_agent_v2_registration(
             _PREVIEW_ACTION,
             "job.start",
             "job.sync",
+            AWAITING_SUBMIT_ACTION,
             CONFIGURE_ACTION,
             _CONTACTS_LIST_ACTION,
         ],
-        surfaces=["job.start", CONFIGURATOR_SURFACE],
+        surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE],
         resources=[_contacts_resource_definition()],
+        # The SDK derives dataset.hello_cases.query and the dataset surface.
+        datasets=[dataset_definition()],
         scheduled_start=True,
     )
 
@@ -90,6 +113,10 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
     data = _request_dict(request)
     if data.get("surface") == CONFIGURATOR_SURFACE:
         return _surface_result(data, configurator_document(_job_id(data), _input(data)))
+    if data.get("surface") == AWAITING_SURFACE:
+        return _surface_result(data, _awaiting_document(data))
+    if data.get("surface") == ANALYTICS_SURFACE:
+        return _surface_result(data, analytics_document(_input(data)))
     return _surface_result(
         data,
         {
@@ -103,7 +130,13 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
                     "type": "number",
                     "required": True,
                     "default": 3,
-                }
+                },
+                {
+                    "id": "add_human_in_the_loop",
+                    "label": "Add human in the loop",
+                    "type": "boolean",
+                    "default": False,
+                },
             ],
             "submit": {"action": "job.start", "label": "Start"},
             "preview": {"action": "job.start.preview"},
@@ -115,19 +148,8 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
 def handle_human_loop_v2_surface(request: Any) -> dict[str, Any]:
     """Load job-start or awaiting surfaces for the human-loop agent."""
     data = _request_dict(request)
-    if data.get("surface") == "case.step.awaiting":
-        document = {
-            "type": "Form",
-            "id": "hello_world.case.step.awaiting",
-            "title": "Human approval",
-            "fields": [
-                {"id": "approved", "label": "Approved", "type": "boolean", "default": True},
-                {"id": "comment", "label": "Comment", "type": "text", "required": False},
-            ],
-            "submit": {"action": "step.awaiting.submit", "label": "Submit"},
-            "state": {"case_id": data.get("case_id"), "step_id": data.get("step_id")},
-        }
-        return _surface_result(data, document)
+    if data.get("surface") == AWAITING_SURFACE:
+        return _surface_result(data, _awaiting_document(data))
 
     return _surface_result(
         data,
@@ -162,25 +184,37 @@ def handle_simple_v2_action(request: Any) -> dict[str, Any]:
         if idempotency_key in _started_jobs:
             return _started_jobs[idempotency_key]
         count = _count(data, default=3)
-        job_state = _simple_job_state(data, count=count, status="completed")
+        with_human = _flag(data, "add_human_in_the_loop")
+        job_state = _simple_job_state(data, count=count, with_human=with_human)
+        _jobs[job_state["job"]["id"]] = job_state
         result = _ok(
             "job.started",
             job_id=job_state["job"]["id"],
-            status="completed",
-            message=_start_message(count, data.get("schedule")),
+            status=job_state["job"]["status"],
+            message=_start_message(count, data.get("schedule"), with_human),
             job_state=job_state,
         )
         if idempotency_key:
             _started_jobs[idempotency_key] = result
         return result
     if action == "job.sync":
-        count = _count(data, default=1)
+        job_state = _jobs.get(_job_id(data)) or _simple_job_state(
+            data, count=_count(data, default=1), with_human=False
+        )
+        return _ok("job.synced", job_state=job_state)
+    if action == AWAITING_SUBMIT_ACTION:
+        job_state = _submit_review(data)
         return _ok(
-            "job.synced",
-            job_state=_simple_job_state(data, count=count, status="completed"),
+            "step.awaiting.submitted",
+            job_id=job_state["job"]["id"],
+            case_id=data.get("case_id"),
+            step_id=data.get("step_id"),
+            job_state=job_state,
         )
     if action == CONFIGURE_ACTION:
         return configure(_job_id(data), _input(data))
+    if action == DATASET_QUERY_ACTION:
+        return query_dataset(_jobs, _input(data))
     if action.startswith("resource.contacts."):
         return _handle_contacts_action(action, _input(data))
     return _error("action.unsupported", action=action)
@@ -221,6 +255,7 @@ def _registration(
     actions: list[str | V2ActionDefinition],
     surfaces: list[str],
     resources: list[dict[str, Any]],
+    datasets: list[dict[str, Any]] = (),
     scheduled_start: bool = False,
 ) -> SupervaizerV2AgentRegistrationContract:
     return build_v2_agent_registration(
@@ -233,6 +268,7 @@ def _registration(
         surfaces=surfaces,
         actions=actions,
         resources=resources,
+        datasets=datasets,
         case_lanes=[{"id": "work", "label": "Work", "default": True}],
         # Lets Studio start this agent on a cron schedule (Studio owns the
         # clock and calls the normal job.start). Omitted on the wire when False.
@@ -308,34 +344,115 @@ def _handle_contacts_action(action: str, data: dict[str, Any]) -> dict[str, Any]
     )
 
 
-def _simple_job_state(data: dict[str, Any], *, count: int, status: str) -> dict[str, Any]:
+def _simple_job_state(data: dict[str, Any], *, count: int, with_human: bool) -> dict[str, Any]:
+    """`count` completed hello cases, plus one awaiting review case when asked for."""
     job_id = _job_id(data)
+    config = job_config(job_id)
+    cases = [_hello_case(job_id, index, config) for index in range(1, count + 1)]
+    if with_human:
+        cases.append(_review_case(f"{job_id}-case-review"))
+    status = "awaiting" if with_human else "completed"
     return {
         "job": _job_snapshot(data, job_id=job_id, status=status, agent_slug=SIMPLE_AGENT_SLUG),
-        "cases": [
+        "cases": cases,
+    }
+
+
+def _hello_case(job_id: str, index: int, config: dict[str, Any]) -> dict[str, Any]:
+    name, city = random.choice(NAMES), random.choice(CITIES)
+    message = f"{config['greeting']}, {name} from {city}!"
+    if config.get("signature"):
+        message += f" {config['signature']}"
+    if config.get("shout"):
+        message = message.upper()
+    return {
+        "id": f"{job_id}-case-{index}",
+        "lane": "work",
+        "title": f"{config['greeting']} {name} ({index})",
+        "status": "completed",
+        "metadata": {"name": name, "city": city, "message": message},
+        "steps": [
             {
-                "id": f"{job_id}-case-{index}",
-                "lane": "work",
-                "title": f"{greeting(job_id)} case {index}",
-                "status": status,
-                "steps": [
-                    {
-                        "id": f"{job_id}-case-{index}-say-hello",
-                        "activity": "operation",
-                        "status": status,
-                        "title": "Say hello",
-                    }
-                ],
+                "id": f"{job_id}-case-{index}-say-hello",
+                "activity": "operation",
+                "status": "completed",
+                "title": "Say hello",
             }
-            for index in range(1, count + 1)
         ],
+    }
+
+
+def _review_case(case_id: str, step_id: str | None = None) -> dict[str, Any]:
+    return {
+        "id": case_id,
+        "lane": "work",
+        "title": "Human review case",
+        "status": "awaiting",
+        "metadata": {},
+        "steps": [
+            {
+                "id": step_id or f"{case_id}-approval",
+                "activity": "operation",
+                "status": "awaiting",
+                "title": "Human approval",
+                "awaiting": {
+                    "reason": "human_input",
+                    "surface": AWAITING_SURFACE,
+                    "action": AWAITING_SUBMIT_ACTION,
+                    "fields": AWAITING_FIELDS,
+                },
+            }
+        ],
+    }
+
+
+def _complete_review(case: dict[str, Any], submitted: dict[str, Any]) -> None:
+    case["status"] = "completed"
+    case["metadata"].update(
+        approved=bool(submitted.get("approved", True)),
+        comment=str(submitted.get("comment") or ""),
+    )
+    for step in case["steps"]:
+        step["status"] = "completed"
+        step.pop("awaiting", None)
+
+
+def _submit_review(data: dict[str, Any]) -> dict[str, Any]:
+    """Complete the review case the submit names; the job completes when nothing awaits."""
+    job_id = _job_id(data)
+    case_id = str(data.get("case_id") or f"{job_id}-case-review")
+    job_state = _jobs.get(job_id) or {
+        # Unknown job (restart): the hello cases completed at start, only the
+        # review case is rebuilt, from the ids Studio sends back.
+        "job": _job_snapshot(data, job_id=job_id, status="awaiting", agent_slug=SIMPLE_AGENT_SLUG),
+        "cases": [_review_case(case_id, data.get("step_id"))],
+    }
+    for case in job_state["cases"]:
+        if case["id"] == case_id:
+            _complete_review(case, _input(data))
+    if all(case["status"] != "awaiting" for case in job_state["cases"]):
+        job_state["job"]["status"] = "completed"
+    _jobs[job_id] = job_state
+    return job_state
+
+
+def _awaiting_document(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "Form",
+        "id": "hello_world.case.step.awaiting",
+        "title": "Human approval",
+        "fields": [
+            {"id": "approved", "label": "Approved", "type": "boolean", "default": True},
+            {"id": "comment", "label": "Comment", "type": "text", "required": False},
+        ],
+        "submit": {"action": AWAITING_SUBMIT_ACTION, "label": "Submit"},
+        "state": {"case_id": data.get("case_id"), "step_id": data.get("step_id")},
     }
 
 
 def _awaiting_job_state(data: dict[str, Any]) -> dict[str, Any]:
     job_id = _job_id(data)
     case_id = str(data.get("case_id") or f"{job_id}-case-1")
-    step_id = str(data.get("step_id") or f"{case_id}-approval")
     return {
         "job": _job_snapshot(
             data,
@@ -343,45 +460,14 @@ def _awaiting_job_state(data: dict[str, Any]) -> dict[str, Any]:
             status="awaiting",
             agent_slug=HUMAN_LOOP_AGENT_SLUG,
         ),
-        "cases": [
-            {
-                "id": case_id,
-                "lane": "work",
-                "title": "Human review case",
-                "status": "awaiting",
-                "steps": [
-                    {
-                        "id": step_id,
-                        "activity": "operation",
-                        "status": "awaiting",
-                        "title": "Human approval",
-                        "awaiting": {
-                            "reason": "human_input",
-                            "surface": "case.step.awaiting",
-                            "action": "step.awaiting.submit",
-                            "fields": [
-                                {
-                                    "id": "approved",
-                                    "label": "Approved",
-                                    "type": "boolean",
-                                    "required": True,
-                                },
-                                {"id": "comment", "label": "Comment", "type": "text"},
-                            ],
-                        },
-                    }
-                ],
-            }
-        ],
+        "cases": [_review_case(case_id, data.get("step_id"))],
     }
 
 
 def _completed_human_loop_state(data: dict[str, Any]) -> dict[str, Any]:
     state = _awaiting_job_state(data)
+    _complete_review(state["cases"][0], _input(data))
     state["job"]["status"] = "completed"
-    state["cases"][0]["status"] = "completed"
-    state["cases"][0]["steps"][0]["status"] = "completed"
-    state["cases"][0]["steps"][0].pop("awaiting", None)
     return state
 
 
@@ -414,9 +500,11 @@ def _error(effect_type: str, **effect: Any) -> dict[str, Any]:
     return {"status": "error", "effects": [{"type": effect_type, **effect}]}
 
 
-def _start_message(count: int, schedule: Any) -> str:
+def _start_message(count: int, schedule: Any, with_human: bool = False) -> str:
     """Name the Studio schedule when the start was a scheduled firing."""
     message = f"Completed {count} hello case(s)"
+    if with_human:
+        message += ", 1 case awaits human review"
     if isinstance(schedule, dict):
         name = schedule.get("schedule_name") or schedule.get("schedule_id")
         message += f" for schedule {name} (run {schedule.get('run_number')})"
@@ -429,6 +517,11 @@ def _count(data: dict[str, Any], *, default: int, field: str = "count") -> int:
         return max(0, min(int(value), 100))
     except (TypeError, ValueError):
         return default
+
+
+def _flag(data: dict[str, Any], field: str) -> bool:
+    value = _input(data).get(field, False)
+    return value is True or str(value).lower() in {"true", "1", "yes"}
 
 
 def _input(data: dict[str, Any]) -> dict[str, Any]:

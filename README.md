@@ -89,6 +89,18 @@ Run E2E tests with:
 just test
 ```
 
+## Shared Dashboard and Metrics
+
+The simple agent declares the `mission.analytics` surface and a mission-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows. The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
+
+## Configure Form
+
+The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is the per-job configure form: greeting (text), signature (text) and shout (boolean). Saves go through `job.configure` with the revision they were made from, and the values shape the case messages of the next start.
+
+## Human in the Loop
+
+The simple agent's start form has an **Add human in the loop** switch. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the switch on, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
+
 ## Scheduled Starts
 
 The `simple_agent` advertises `capabilities.scheduled_start: true` in its v2 registration (`agent_v2.py`). With that flag a Studio mission manager can start the agent on a cron schedule (Studio job scheduling, PR #917).
