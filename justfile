@@ -45,7 +45,8 @@ start-studio port="8001":
     set -euo pipefail
     export SUPERVAIZER_LOCAL_MODE=false
     export SUPERVAIZER_WORKSPACE_AUTH_REQUIRED=true
-    export SUPERVAIZER_WORKSPACE_AUTH_ISSUER="${SUPERVAIZER_WORKSPACE_AUTH_ISSUER:-https://studio.supervaize.com}"
+    # No default: a wrong issuer only fails later, when Studio loads a surface or starts a job.
+    : "${SUPERVAIZER_WORKSPACE_AUTH_ISSUER:?Set SUPERVAIZER_WORKSPACE_AUTH_ISSUER to the Studio SPA origin, e.g. https://studio.supervaize.com}"
     export SUPERVAIZER_WORKSPACE_AUTH_JWKS_URL="${SUPERVAIZER_WORKSPACE_AUTH_JWKS_URL:-${SUPERVAIZE_API_URL%/}/api/v1/teams/${SUPERVAIZE_WORKSPACE_ID}/workspace-agent-grants/jwks/}"
     uv run supervaizer start --port {{port}} --public-url "http://host.docker.internal:{{port}}"
 

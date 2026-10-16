@@ -70,7 +70,7 @@ just start-studio
 ```
 
 It listens on port 8001 and registers `http://host.docker.internal:8001`, which a Studio running in Docker on this machine can call back. Set `SUPERVAIZER_SERVER_ID` to the server id Studio already knows for this agent; otherwise each run registers a new server and a new agent.
-Workspace authorization is required for a Studio-registered controller: the recipe derives the JWKS URL from the Studio env and uses `https://studio.supervaize.com` as the issuer. Set `SUPERVAIZER_WORKSPACE_AUTH_ISSUER` to your Studio's SPA origin (shown on its Developer page) when it is not production.
+Workspace authorization is required for a Studio-registered controller: the recipe derives the JWKS URL from the Studio env and requires `SUPERVAIZER_WORKSPACE_AUTH_ISSUER`, your Studio's SPA origin (shown on its Developer page): `https://studio.supervaize.com` for production. A wrong issuer makes job start fail with "Workspace authorization token issuer does not match this server configuration".
 
 ## Available Endpoints
 
