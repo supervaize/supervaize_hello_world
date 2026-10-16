@@ -2,8 +2,9 @@
 
 A before and an after checkpoint guard every "Say hello" step. Studio knows a v2
 case only once a job_state has projected it, so job.start holds the hello steps
-as pending and the checkpoints run on the first job.sync. A paused checkpoint
-parks its step as awaiting until Studio pushes rule.checkpoint.resume.
+as pending and the checkpoints run on the first job.sync, which the agent asks
+Studio for. A paused checkpoint parks its step as awaiting until Studio pushes
+rule.checkpoint.resume.
 """
 
 from __future__ import annotations
@@ -11,7 +12,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
 from supervaizer import Account, RuleCheckpointGate
+from supervaizer.common import log
 from supervaizer.contracts import (
     RuleCheckpointResponse,
     RuleCheckpointResume,
@@ -29,6 +32,13 @@ account: Account | None = None
 # ponytail: in-memory per job; a restart loses the gate and its snapshot token,
 # so a decision that arrives after one is rejected. A real agent persists both.
 _pending: dict[str, dict[str, Any]] = {}
+REFRESH_EVENT = "supervaizer.v2.job.refresh_requested"
+# ponytail: a fixed wait, so Studio has applied the job.start result and knows the
+# cases before its job.sync runs the checkpoints. A slower Studio rejects the
+# checkpoints and the job waits for a manual Update, as it did before.
+REFRESH_DELAY_SECONDS = 2.0
+_refresh_client = httpx.AsyncClient(timeout=30.0)
+_refresh_tasks: set[asyncio.Task] = set()
 
 
 class RecoveryRequired(RuntimeError):
@@ -42,15 +52,50 @@ def governed(data: dict[str, Any]) -> bool:
 def open_gate(data: dict[str, Any], job_state: dict[str, Any]) -> None:
     """Keep the Studio gate for this job and hold its hello steps until the gate allows them."""
     gate = RuleCheckpointGate.from_job_start(account, V2ActionRequest.model_validate(data))
+    # The greeting card appears only once its step runs, so a stopped case delivers nothing.
+    held_outputs = {}
     for case in _hello_cases(job_state):
-        case["status"] = case["steps"][0]["status"] = "pending"
+        case["status"] = "pending"
+        for step in case["steps"]:
+            step["status"] = "pending"
+        held_outputs[case["id"]] = _hello_step(case).pop("outputs", [])
     _set_job_status(job_state, "active")
     _pending[job_state["job"]["id"]] = {
         "gate": gate,
         "job_state": job_state,
         "cursor": (0, "before"),
         "waiter": None,
+        "outputs": held_outputs,
     }
+    schedule_refresh(job_state["job"]["id"])
+
+
+def schedule_refresh(job_id: str) -> None:
+    """Ask Studio, in the background, to sync the job: Studio never polls a v2 job."""
+    task = asyncio.get_running_loop().create_task(_request_refresh(job_id))
+    _refresh_tasks.add(task)  # the loop keeps only weak references to tasks
+    task.add_done_callback(_refresh_tasks.discard)
+
+
+async def _request_refresh(job_id: str) -> None:
+    await asyncio.sleep(REFRESH_DELAY_SECONDS)
+    # Async on purpose: Studio handles the event inline and calls job.sync on this
+    # process before it answers, so a blocking post would freeze the event loop.
+    try:
+        response = await _refresh_client.post(
+            account.url_event,
+            headers=account.api_headers,
+            json={
+                "source": {"job": job_id},
+                "workspace": account.workspace_id,
+                "event_type": REFRESH_EVENT,
+                "object_type": "job",
+                "details": {"reason": "rule_checkpoints"},
+            },
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        log.warning(f"[Rules] Studio did not sync job {job_id}; it waits for a manual Update: {error}")
 
 
 async def sync(job_id: str) -> dict[str, Any] | None:
@@ -61,6 +106,13 @@ async def sync(job_id: str) -> dict[str, Any] | None:
     if pending["waiter"] is None:  # not parked on a Studio decision
         await _run(pending)
     return pending["job_state"]
+
+
+def stop(job_id: str) -> None:
+    """Drop the gate of a stopped job and cancel a checkpoint parked on Studio."""
+    pending = _pending.pop(job_id, None)
+    if pending and pending["waiter"] is not None:
+        pending["waiter"].cancel()
 
 
 async def resume(data: dict[str, Any]) -> dict[str, Any]:
@@ -87,7 +139,7 @@ async def _run(pending: dict[str, Any], decision: RuleCheckpointResponse | None 
     while pending["cursor"][0] < len(cases):
         index, phase = pending["cursor"]
         case = cases[index]
-        step = case["steps"][0]
+        step = _hello_step(case)
         if decision is None:
             decision = await gate.checkpoint(
                 occurrence_id=step["id"],
@@ -114,6 +166,8 @@ async def _run(pending: dict[str, Any], decision: RuleCheckpointResponse | None 
         step.pop("awaiting", None)
         if phase == "before":
             # ponytail: the effect is the greeting already in case.metadata
+            case["steps"][0]["status"] = "completed"  # Start
+            step["outputs"] = pending["outputs"].pop(case["id"])
             _set_status(job_state, case, "active")
             pending["cursor"] = (index, "after")
         else:
@@ -132,11 +186,16 @@ def _context(case: dict[str, Any], phase: str) -> dict[str, Any]:
 
 
 def _hello_cases(job_state: dict[str, Any]) -> list[dict[str, Any]]:
-    return [case for case in job_state["cases"] if case["steps"][0]["id"].endswith("-say-hello")]
+    return [case for case in job_state["cases"] if _hello_step(case)["id"].endswith("-say-hello")]
+
+
+def _hello_step(case: dict[str, Any]) -> dict[str, Any]:
+    """The guarded step: the last one, after Start."""
+    return case["steps"][-1]
 
 
 def _set_status(job_state: dict[str, Any], case: dict[str, Any], status: str) -> None:
-    case["status"] = case["steps"][0]["status"] = status
+    case["status"] = _hello_step(case)["status"] = status
     _set_job_status(job_state, status)
 
 

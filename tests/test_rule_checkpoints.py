@@ -28,7 +28,7 @@ class FakeStudio:
     """Answers the gate's checkpoint posts with scripted decisions, in order."""
 
     def __init__(self, *decisions):
-        self.decisions, self.posts, self.answers = list(decisions), [], []
+        self.decisions, self.posts, self.answers, self.refreshes = list(decisions), [], [], []
 
     async def post(self, url, *, headers, json):
         self.posts.append({"url": url, "headers": headers, "body": json})
@@ -47,6 +47,8 @@ def studio(monkeypatch):
     def install(*decisions):
         fake = FakeStudio(*decisions)
         monkeypatch.setattr(rule_controls._httpx_client, "post", fake.post)
+        # Records the refresh request instead of a background post to Studio.
+        monkeypatch.setattr(agent_rules, "schedule_refresh", fake.refreshes.append)
         return fake
 
     return install
@@ -68,7 +70,7 @@ def _resume(client, fake, job_id, case, status="allow", **overrides):
     """Push the decision for the last checkpoint the fake answered, as Studio does."""
     from supervaizer_control import simple_agent
 
-    answer, step_id = fake.answers[-1], case["steps"][0]["id"]
+    answer, step_id = fake.answers[-1], case["steps"][-1]["id"]
     decision = {
         "checkpoint_id": answer["checkpoint_id"],
         "occurrence_id": step_id,
@@ -110,6 +112,7 @@ def test_start_without_rules_completes_at_once(client, studio):
 
     assert started["status"] == "completed"
     assert fake.posts == []
+    assert fake.refreshes == []
     assert _sync(client, "job-rules-0")["job_state"]["job"]["status"] == "completed"
 
 
@@ -120,14 +123,17 @@ def test_allowed_checkpoints_complete_the_job_on_sync(client, studio):
 
     assert started["status"] == "active"
     assert started["message"] == "2 hello case(s) held for Studio rule checkpoints"
-    assert [case["steps"][0]["status"] for case in started["job_state"]["cases"]] == ["pending", "pending"]
+    assert [case["steps"][-1]["status"] for case in started["job_state"]["cases"]] == ["pending", "pending"]
+    assert all(case["steps"][-1]["outputs"] == [] for case in started["job_state"]["cases"])  # no card yet
     assert fake.posts == []  # Studio projects the cases from this response first
+    assert fake.refreshes == ["job-rules-1"]  # then the agent asks Studio for the job.sync
 
     state = _sync(client, "job-rules-1")["job_state"]
 
     assert state["job"]["status"] == "completed"
     assert all(case["status"] == "completed" for case in state["cases"])
-    steps = [case["steps"][0]["id"] for case in state["cases"]]
+    assert all(case["steps"][-1]["outputs"][0]["type"] == "greeting_card" for case in state["cases"])
+    steps = [case["steps"][-1]["id"] for case in state["cases"]]
     assert [(post["body"]["phase"], post["body"]["step_id"]) for post in fake.posts] == [
         ("before", steps[0]),
         ("after", steps[0]),
@@ -153,12 +159,14 @@ def test_paused_checkpoint_parks_the_step_until_studio_resumes(client, studio):
     case = state["cases"][0]
     assert state["job"]["status"] == "awaiting"
     assert case["status"] == "awaiting"
-    assert case["steps"][0]["awaiting"] == {
+    assert case["steps"][-1]["awaiting"] == {
         "reason": "rule_checkpoint",
         "surface": "case.step.awaiting",
         "action": "rule.checkpoint.resume",
+        "fields": [],
+        "reopenable": False,
     }
-    assert state["cases"][1]["steps"][0]["status"] == "pending"
+    assert state["cases"][1]["steps"][-1]["status"] == "pending"
     # Another sync reports the same state and posts nothing while Studio decides.
     assert _sync(client, "job-rules-2")["job_state"] == state
     assert len(fake.posts) == 1
@@ -173,7 +181,7 @@ def test_paused_checkpoint_parks_the_step_until_studio_resumes(client, studio):
     assert resumed["type"] == "rule.checkpoint.resumed"
     assert resumed["job_state"]["job"]["status"] == "completed"
     assert all(step["status"] == "completed" for c in resumed["job_state"]["cases"] for step in c["steps"])
-    assert "awaiting" not in resumed["job_state"]["cases"][0]["steps"][0]
+    assert "awaiting" not in resumed["job_state"]["cases"][0]["steps"][-1]
     assert [post["body"]["phase"] for post in fake.posts] == ["before", "after", "before", "after"]
     assert _sync(client, "job-rules-2")["job_state"] == resumed["job_state"]
 
@@ -182,12 +190,12 @@ def test_denied_checkpoint_fails_the_step(client, studio):
     fake = studio("allow", "pause")
     _start(client, "job-rules-3", count=1, rule_snapshot=SNAPSHOT)
     state = _sync(client, "job-rules-3")["job_state"]
-    assert state["cases"][0]["steps"][0]["status"] == "awaiting"
+    assert state["cases"][0]["steps"][-1]["status"] == "awaiting"
 
     denied = _resume(client, fake, "job-rules-3", state["cases"][0], status="stop")
 
     assert denied["job_state"]["job"]["status"] == "failed"
-    assert denied["job_state"]["cases"][0]["steps"][0]["status"] == "failed"
+    assert denied["job_state"]["cases"][0]["steps"][-1]["status"] == "failed"
     assert len(fake.posts) == 2
 
 
@@ -202,3 +210,39 @@ def test_stopped_checkpoint_fails_the_step(client, studio):
     assert len(fake.posts) == 1
     # Nothing waits: a late decision is rejected.
     assert _resume(client, fake, "job-rules-4", state["cases"][0])["type"] == "rule.checkpoint.rejected"
+
+
+def test_refresh_request_asks_studio_to_sync_the_job(monkeypatch):
+    """The event Studio turns into a job.sync, which runs the held checkpoints."""
+    import asyncio
+
+    posts = []
+
+    async def post(url, *, headers, json):
+        posts.append({"url": url, "headers": headers, "body": json})
+        return SimpleNamespace(raise_for_status=lambda: None)
+
+    account = SimpleNamespace(
+        url_event="https://studio.example/w/odm/api/v1/ctrl-events/",
+        api_headers={"Authorization": "Api-Key test"},
+        workspace_id="odm",
+    )
+    monkeypatch.setattr(agent_rules, "account", account)
+    monkeypatch.setattr(agent_rules, "REFRESH_DELAY_SECONDS", 0)
+    monkeypatch.setattr(agent_rules._refresh_client, "post", post)
+
+    asyncio.run(agent_rules._request_refresh("job-rules-9"))
+
+    assert posts == [
+        {
+            "url": "https://studio.example/w/odm/api/v1/ctrl-events/",
+            "headers": {"Authorization": "Api-Key test"},
+            "body": {
+                "source": {"job": "job-rules-9"},
+                "workspace": "odm",
+                "event_type": "supervaizer.v2.job.refresh_requested",
+                "object_type": "job",
+                "details": {"reason": "rule_checkpoints"},
+            },
+        }
+    ]

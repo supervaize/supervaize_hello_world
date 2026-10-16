@@ -50,5 +50,5 @@ def test_scheduled_firing_is_idempotent_and_names_the_schedule(client):
     assert effect["type"] == "job.started"
     assert effect["job_id"] == "job-sched-7"
     assert effect["message"] == "Completed 2 hello case(s) for schedule Hourly hello (run 7)"
-    assert len(effect["job_state"]["cases"]) == 2
+    assert len(first["job_state"]["cases"]) == 2
     assert retry == first
