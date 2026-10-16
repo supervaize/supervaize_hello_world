@@ -75,6 +75,6 @@ def test_configure_form_fields_shape_the_case_messages(client):
     assert saved["status"] == "ok"
 
     started = _invoke(client, simple_agent.slug, "job.start", {"count": 1}, job_id="job-cfg-2")
-    message = started["effects"][0]["job_state"]["cases"][0]["metadata"]["message"]
+    message = started["job_state"]["cases"][0]["metadata"]["message"]
     assert message.startswith("HI, ")
     assert message.endswith("THE TEAM")

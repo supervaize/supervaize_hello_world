@@ -243,8 +243,9 @@ def test_a2a_human_loop_start_returns_awaiting_step(human_loop_client):
     )
 
     assert response.status_code == 200
-    effect = response.json()["result"]["effects"][0]
-    step = effect["job_state"]["cases"][0]["steps"][0]
+    result = response.json()["result"]
+    effect = result["effects"][0]
+    step = result["job_state"]["cases"][0]["steps"][-1]
     assert effect["type"] == "job.started"
     assert step["status"] == "awaiting"
     assert step["awaiting"]["reason"] == "human_input"

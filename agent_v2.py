@@ -34,6 +34,7 @@ from agent_data_resource import (
     _list_contacts,
     _update_contact,
 )
+from agent_deliverable import ARTIFACT_ACTION, ARTIFACT_TYPES, greeting_card, load_artifact
 
 SIMPLE_AGENT_SLUG = "hello-world-ai-agent"
 HUMAN_LOOP_AGENT_SLUG = "human-in-the-loop-agent"
@@ -60,6 +61,8 @@ AWAITING_FIELDS = [
 # Random case content, so every run looks different in Studio.
 NAMES = ("Ada", "Grace", "Linus", "Margaret", "Alan", "Hedy")
 CITIES = ("Paris", "Lisbon", "Nairobi", "Kyoto", "Montréal", "Tallinn")
+# Dollars per step; Studio adds step costs up into the case and job cost.
+STEP_COST = 0.1
 # Studio retries a scheduled firing with the same idempotency_key; it must get
 # the original job back, not a second one.
 # ponytail: in-memory, lost on restart; a real agent keys this on its job store
@@ -83,12 +86,16 @@ def build_simple_agent_v2_registration(
             _PREVIEW_ACTION,
             "job.start",
             "job.sync",
+            # Studio's Stop and Complete buttons call job.stop on a v2 agent.
+            "job.stop",
             AWAITING_SUBMIT_ACTION,
             CONFIGURE_ACTION,
             _CONTACTS_LIST_ACTION,
+            ARTIFACT_ACTION,
         ],
         surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE],
         resources=[_contacts_resource_definition()],
+        artifact_types=ARTIFACT_TYPES,
         # The SDK derives dataset.hello_cases.query and the dataset surface.
         datasets=[dataset_definition()],
         scheduled_start=True,
@@ -106,7 +113,7 @@ def build_human_loop_v2_registration(
         agent_slug=HUMAN_LOOP_AGENT_SLUG,
         display_name="Human-in-the-Loop Agent",
         agent_version=agent_version,
-        actions=[_PREVIEW_ACTION, "job.start", "job.sync", "step.awaiting.submit"],
+        actions=[_PREVIEW_ACTION, "job.start", "job.sync", "job.stop", "step.awaiting.submit"],
         surfaces=["job.start", "case.step.awaiting"],
         resources=[],
     )
@@ -216,6 +223,13 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
             data, count=_count(data, default=1), with_human=False
         )
         return _ok("job.synced", job_state=job_state)
+    if action == "job.stop":
+        # Studio cancels or completes the job itself; the agent only drops its state.
+        _jobs.pop(_job_id(data), None)
+        agent_rules.stop(_job_id(data))
+        return _ok("job.stopped", job_id=_job_id(data))
+    if action == ARTIFACT_ACTION.id:
+        return load_artifact(_input(data).get("artifact") or {})
     if action == agent_rules.RESUME_ACTION:
         return await _resume_rule_checkpoint(data)
     if action == AWAITING_SUBMIT_ACTION:
@@ -251,6 +265,8 @@ def handle_human_loop_v2_action(request: Any) -> dict[str, Any]:
             message="Waiting for human approval",
             job_state=job_state,
         )
+    if action == "job.stop":
+        return _ok("job.stopped", job_id=_job_id(data))
     if action == "step.awaiting.submit":
         job_state = _completed_human_loop_state(data)
         return _ok(
@@ -272,6 +288,7 @@ def _registration(
     surfaces: list[str],
     resources: list[dict[str, Any]],
     datasets: list[dict[str, Any]] = (),
+    artifact_types: list[dict[str, Any]] = (),
     scheduled_start: bool = False,
     rule_checkpoints: dict[str, Any] | None = None,
 ) -> SupervaizerV2AgentRegistrationContract:
@@ -286,6 +303,7 @@ def _registration(
         actions=actions,
         resources=resources,
         datasets=datasets,
+        artifact_types=artifact_types,
         case_lanes=[{"id": "work", "label": "Work", "default": True}],
         # Lets Studio start this agent on a cron schedule (Studio owns the
         # clock and calls the normal job.start). Omitted on the wire when False.
@@ -371,7 +389,7 @@ def _simple_job_state(data: dict[str, Any], *, count: int, with_human: bool) -> 
         cases.append(_review_case(f"{job_id}-case-review"))
     status = "awaiting" if with_human else "completed"
     return {
-        "job": _job_snapshot(data, job_id=job_id, status=status, agent_slug=SIMPLE_AGENT_SLUG),
+        "job": _job_snapshot(data, job_id=job_id, status=status, agent_slug=SIMPLE_AGENT_SLUG, cases=cases),
         "cases": cases,
     }
 
@@ -383,20 +401,35 @@ def _hello_case(job_id: str, index: int, config: dict[str, Any]) -> dict[str, An
         message += f" {config['signature']}"
     if config.get("shout"):
         message = message.upper()
+    case_id = f"{job_id}-case-{index}"
     return {
-        "id": f"{job_id}-case-{index}",
+        "id": case_id,
         "lane": "work",
         "title": f"{config['greeting']} {name} ({index})",
         "status": "completed",
         "metadata": {"name": name, "city": city, "message": message},
         "steps": [
+            _start_step(case_id),
             {
-                "id": f"{job_id}-case-{index}-say-hello",
+                # agent_rules guards this step; it finds it by the -say-hello suffix.
+                "id": f"{case_id}-say-hello",
                 "activity": "operation",
                 "status": "completed",
-                "title": "Say hello",
-            }
+                "title": "Deliver greeting card",
+                "cost": STEP_COST,
+                "outputs": [greeting_card(case_id, message)],
+            },
         ],
+    }
+
+
+def _start_step(case_id: str) -> dict[str, Any]:
+    return {
+        "id": f"{case_id}-start",
+        "activity": "operation",
+        "status": "completed",
+        "title": "Start",
+        "cost": STEP_COST,
     }
 
 
@@ -408,11 +441,13 @@ def _review_case(case_id: str, step_id: str | None = None) -> dict[str, Any]:
         "status": "awaiting",
         "metadata": {},
         "steps": [
+            _start_step(case_id),
             {
                 "id": step_id or f"{case_id}-approval",
                 "activity": "operation",
                 "status": "awaiting",
                 "title": "Human approval",
+                "cost": STEP_COST,
                 "awaiting": {
                     "reason": "human_input",
                     "surface": AWAITING_SURFACE,
@@ -486,14 +521,16 @@ def _awaiting_document(data: dict[str, Any]) -> dict[str, Any]:
 def _awaiting_job_state(data: dict[str, Any]) -> dict[str, Any]:
     job_id = _job_id(data)
     case_id = str(data.get("case_id") or f"{job_id}-case-1")
+    cases = [_review_case(case_id, data.get("step_id"))]
     return {
         "job": _job_snapshot(
             data,
             job_id=job_id,
             status="awaiting",
             agent_slug=HUMAN_LOOP_AGENT_SLUG,
+            cases=cases,
         ),
-        "cases": [_review_case(case_id, data.get("step_id"))],
+        "cases": cases,
     }
 
 
@@ -505,15 +542,22 @@ def _completed_human_loop_state(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _job_snapshot(
-    data: dict[str, Any], *, job_id: str, status: str, agent_slug: str
+    data: dict[str, Any], *, job_id: str, status: str, agent_slug: str, cases: list[dict[str, Any]] | None = None
 ) -> dict[str, Any]:
-    return {
+    """Without `cases` the job's cost is unknown here, so Studio keeps the cost it has."""
+    snapshot = {
         "id": job_id,
         "agent_slug": agent_slug,
         "mission_id": str(data.get("mission_id") or "mission"),
         "status": status,
         "source": {"type": "fresh_start"},
     }
+    if cases is not None:
+        # Studio reads a v2 job's cost from here; it does not add up the case costs.
+        # ponytail: every planned step counts, even one a rule later stops.
+        total_cost = round(sum(step.get("cost", 0) for case in cases for step in case["steps"]), 2)
+        snapshot["information"] = {"cost": {"total_cost": total_cost}}
+    return snapshot
 
 
 def _surface_result(data: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
@@ -525,8 +569,12 @@ def _surface_result(data: dict[str, Any], document: dict[str, Any]) -> dict[str,
     }
 
 
-def _ok(effect_type: str, **effect: Any) -> dict[str, Any]:
-    return {"status": "ok", "effects": [{"type": effect_type, **effect}]}
+def _ok(effect_type: str, *, job_state: dict[str, Any] | None = None, **effect: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {"status": "ok", "effects": [{"type": effect_type, **effect}]}
+    if job_state is not None:
+        # Studio projects cases only from the result's top-level job_state, never from an effect.
+        result["job_state"] = job_state
+    return result
 
 
 def _error(effect_type: str, **effect: Any) -> dict[str, Any]:

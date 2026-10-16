@@ -186,7 +186,9 @@ def _register_v2_handlers(server: Server) -> None:
         "job.start.preview",
         "job.start",
         "job.sync",
+        "job.stop",
         "step.awaiting.submit",
+        "artifact.get",
         # Replaces the SDK default resume handler, which only wakes an
         # in-process SDK Case gate; this agent keeps its gates in agent_rules.
         agent_rules.RESUME_ACTION,
@@ -210,7 +212,7 @@ def _register_v2_handlers(server: Server) -> None:
         handle_human_loop_v2_surface,
         agent_slug=human_loop_agent.slug,
     )
-    for action in ("job.start.preview", "job.start", "job.sync", "step.awaiting.submit"):
+    for action in ("job.start.preview", "job.start", "job.sync", "job.stop", "step.awaiting.submit"):
         server.register_v2_action(
             action,
             handle_human_loop_v2_action,

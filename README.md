@@ -110,16 +110,25 @@ The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is th
 
 The simple agent's start form has an **Add human in the loop** switch. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the switch on, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
 
+## Steps, deliverables and costs
+
+Every case has a **Start** step and a second step. In a hello case the second step, **Deliver greeting card**, outputs a fake `greeting_card` deliverable (`agent_deliverable.py`). Studio opens it with the read-only `artifact.get` action, which returns the card as Markdown. The card text travels in the artifact title, so it still opens after a restart. In a review case the second step is the human approval.
+
+Each step costs $0.10. Studio adds the step costs up into the case cost, but it reads the job cost from the job snapshot (`information.cost.total_cost`), so the agent reports that total. Studio stops a v2 job through the agent's `job.stop` action.
+
+A new non-job action such as `artifact.get` changes the agent's grant scopes: the workspace must accept the agent grant again on the agent page before Studio can call it.
+
 ## Rule checkpoints
 
 The simple agent declares `capabilities.rule_checkpoints` (version 1, phases `before` and `after`) in `agent_v2.py`. The SDK then also declares the `rule.checkpoint.resume` action (job scope). Studio requires both before it starts a job in a mission with rules (`studio/apps/guardrails/services/admission.py`).
 
 `agent_rules.py` runs the flow with the SDK's `RuleCheckpointGate`:
 
-1. `job.start` arrives with an opaque `rule_snapshot` in its input. The agent keeps the gate in memory and returns the hello steps as `pending`. Studio knows a v2 case only once a job state has projected it, so no checkpoint is posted yet.
-2. `job.sync` posts a `before` and an `after` checkpoint per "Say hello" step to `{api_url}/api/v1/rule-checkpoints/`, with the greeting as business context. An `allow` completes the step. A `stop` fails the step and the job.
-3. A `pause` parks the step as `awaiting` with reason `rule_checkpoint` and action `rule.checkpoint.resume`. The decision is taken in Studio's guardrails UI, not through the step surface.
-4. Studio pushes the decision with `rule.checkpoint.resume`. The SDK's `resume_rule_checkpoint` matches it to the live gate, then the agent finishes the step and runs the remaining checkpoints. Studio sees the result on its next `job.sync`.
+1. `job.start` arrives with an opaque `rule_snapshot` in its input. The agent keeps the gate in memory and returns the steps as `pending`, without the greeting card. Studio knows a v2 case only once a job state has projected it, so no checkpoint is posted yet.
+2. Studio never polls a v2 job, so 2 seconds later the agent sends the controller event `supervaizer.v2.job.refresh_requested` from a background task. Studio handles it inline and calls `job.sync` on the agent; a blocking post would freeze the agent's event loop. If Studio is slower than 2 seconds, the job waits for a manual **Update**.
+3. `job.sync` posts a `before` and an `after` checkpoint per "Deliver greeting card" step to `{api_url}/api/v1/rule-checkpoints/`, with the greeting as business context. An `allow` on `before` completes **Start** and adds the card; an `allow` on `after` completes the step. A `stop` fails the step and the job, and the case delivers no card.
+4. A `pause` parks the step as `awaiting` with reason `rule_checkpoint` and action `rule.checkpoint.resume`. The decision is taken in Studio's guardrails UI, not through the step surface.
+5. Studio pushes the decision with `rule.checkpoint.resume`. The SDK's `resume_rule_checkpoint` matches it to the live gate, then the agent finishes the step and runs the remaining checkpoints. Studio sees the result on its next `job.sync`.
 
 Jobs started without rules behave as before. The gate lives in process memory: after a restart (a Vercel cold start) the agent answers a decision with `rule.checkpoint.rejected`. A real agent persists the snapshot with its job. See `tests/test_rule_checkpoints.py`.
 
