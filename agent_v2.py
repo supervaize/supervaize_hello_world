@@ -16,9 +16,15 @@ import agent_rules
 from agent_configurator import (
     CONFIGURATOR_SURFACE,
     CONFIGURE_ACTION,
+    GREET_ACTION,
     configurator_document,
     configure,
+    greet_refusal,
     job_config,
+    job_display,
+)
+from agent_configurator import (
+    message as greeting_message,
 )
 from agent_dashboard import (
     ANALYTICS_SURFACE,
@@ -34,7 +40,12 @@ from agent_data_resource import (
     _list_contacts,
     _update_contact,
 )
-from agent_deliverable import ARTIFACT_ACTION, ARTIFACT_TYPES, greeting_card, load_artifact
+from agent_deliverable import (
+    ARTIFACT_ACTION,
+    ARTIFACT_TYPES,
+    greeting_card,
+    load_artifact,
+)
 
 SIMPLE_AGENT_SLUG = "hello-world-ai-agent"
 HUMAN_LOOP_AGENT_SLUG = "human-in-the-loop-agent"
@@ -89,7 +100,9 @@ def build_simple_agent_v2_registration(
             # Studio's Stop and Complete buttons call job.stop on a v2 agent.
             "job.stop",
             AWAITING_SUBMIT_ACTION,
+            # Job-scoped by default, as every Configurator binding must be.
             CONFIGURE_ACTION,
+            GREET_ACTION,
             _CONTACTS_LIST_ACTION,
             ARTIFACT_ACTION,
         ],
@@ -242,7 +255,15 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
             job_state=job_state,
         )
     if action == CONFIGURE_ACTION:
-        return configure(_job_id(data), _input(data))
+        result = configure(_job_id(data), _input(data))
+        job_state = _jobs.get(_job_id(data))
+        if result["status"] == "ok" and job_state:
+            # Studio refreshes the job's display labels only from a job_state.
+            job_state["job"]["display"] = job_display(_job_id(data))
+            result["job_state"] = job_state
+        return result
+    if action == GREET_ACTION:
+        return _greet(data)
     if action == DATASET_QUERY_ACTION:
         return query_dataset(_jobs, _input(data))
     if action.startswith("resource.contacts."):
@@ -394,13 +415,21 @@ def _simple_job_state(data: dict[str, Any], *, count: int, with_human: bool) -> 
     }
 
 
+def _greet(data: dict[str, Any]) -> dict[str, Any]:
+    """The Configurator's primary action: new hello cases from the saved configuration."""
+    job_id = _job_id(data)
+    if refusal := greet_refusal(job_id, _input(data)):
+        return refusal
+    # ponytail: replaces the cases, review case included; a real agent would add to its job store
+    hello_cases = [case for case in _jobs.get(job_id, {}).get("cases", []) if "say-hello" in case["steps"][-1]["id"]]
+    job_state = _simple_job_state(data, count=len(hello_cases) or 1, with_human=False)
+    _jobs[job_id] = job_state
+    return _ok("job.greeted", job_id=job_id, job_state=job_state)
+
+
 def _hello_case(job_id: str, index: int, config: dict[str, Any]) -> dict[str, Any]:
     name, city = random.choice(NAMES), random.choice(CITIES)
-    message = f"{config['greeting']}, {name} from {city}!"
-    if config.get("signature"):
-        message += f" {config['signature']}"
-    if config.get("shout"):
-        message = message.upper()
+    message = greeting_message(config, name, city)
     case_id = f"{job_id}-case-{index}"
     return {
         "id": case_id,
@@ -552,6 +581,8 @@ def _job_snapshot(
         "status": status,
         "source": {"type": "fresh_start"},
     }
+    if agent_slug == SIMPLE_AGENT_SLUG:
+        snapshot["display"] = job_display(job_id)
     if cases is not None:
         # Studio reads a v2 job's cost from here; it does not add up the case costs.
         # ponytail: every planned step counts, even one a rule later stops.

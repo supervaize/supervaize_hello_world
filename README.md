@@ -104,7 +104,7 @@ The simple agent declares the `mission.analytics` surface and a mission-scoped d
 
 ## Configure Form
 
-The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is the per-job configure form: greeting (text), signature (text) and shout (boolean). Saves go through `job.configure` with the revision they were made from, and the values shape the case messages of the next start.
+The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is the Configure screen of a job. See [Job Configurator](#job-configurator) below.
 
 ## Human in the Loop
 
@@ -145,7 +145,20 @@ See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10
 
 ## Job Configurator
 
-The `simple_agent` also declares the `job.configurator` surface (`agent_configurator.py`). Studio renders it on the job page as an A2UI `Configurator` document: one editable section with a greeting field. Saving invokes the bound `job.configure` action with `{"revision": ..., "value": {"greeting": ...}}`. A save made from a stale revision gets `configurator.conflict` back and Studio reloads the document. The saved greeting names the job's cases.
+The `simple_agent` declares the `job.configurator` surface (`agent_configurator.py`). Studio then opens the job page on a **Configure** tab and draws the agent's A2UI `Configurator` document, one tab per section:
+
+| Section | Component | What it shows |
+| --- | --- | --- |
+| Parameters | `Form` | Greeting, signature and shout. **Save parameters** invokes `job.configure` with `{"revision": ..., "value": {...}}`. |
+| Review & send | `Review` | The readiness checklist (a signature is required) and the primary action **Send greetings**. |
+| Links & exports | `Table` | A link and a sample greeting card opened through `artifact.get`. Schema 2 only. |
+
+- **Revision.** Every action quotes the revision it was made from. A stale one gets `configurator.conflict` back and Studio reloads the document.
+- **Readiness and primary action.** While an item is `blocked`, Studio disables **Send greetings**. The agent checks again in `job.greet`, which replaces the job's hello cases with new ones built from the saved configuration.
+- **Schema negotiation.** Studio sends `supported_schema_versions`; the agent answers at the highest shared version and only emits the `Table` at schema 2.
+- **Display labels.** `job_state.job.display` gives Studio the `Hello job` badge and the `Draft — setup incomplete` status until the checklist is done.
+
+Both actions are job-scoped and declared in the registration: Studio refuses a binding to an undeclared action. A new action changes the grant scopes, so the workspace must accept the agent grant again. See `tests/test_configurator.py` and the [Job Configurator guide](https://docs.runwaize.com/docs/supervaizer-controller/job-configurator).
 
 ## Testing the Agent
 

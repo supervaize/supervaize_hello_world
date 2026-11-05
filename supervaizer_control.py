@@ -23,7 +23,7 @@ from supervaizer import (
 )
 
 import agent_rules
-from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION
+from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION, GREET_ACTION
 from agent_dashboard import ANALYTICS_SURFACE, DATASET_QUERY_ACTION
 from agent_data_resource import contacts_resource
 from agent_v2 import (
@@ -193,6 +193,7 @@ def _register_v2_handlers(server: Server) -> None:
         # in-process SDK Case gate; this agent keeps its gates in agent_rules.
         agent_rules.RESUME_ACTION,
         CONFIGURE_ACTION,
+        GREET_ACTION,
         DATASET_QUERY_ACTION,
         *CONTACT_ACTIONS,
     ):
