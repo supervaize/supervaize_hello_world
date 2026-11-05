@@ -108,6 +108,30 @@ def test_configurator_sections_readiness_and_primary_action(client, monkeypatch)
     assert "Hi, Ada from Paris! The team" in loaded["effects"][0]["artifact"]["content"]
 
 
+def test_send_greetings_keeps_the_case_that_waits_for_a_person(client, monkeypatch):
+    from supervaizer_control import simple_agent
+
+    monkeypatch.setitem(globals(), "JOB_ID", "job-cfg-5")
+    slug = simple_agent.slug
+    started = _invoke(client, slug, "job.start", {"count": 2, "add_human_in_the_loop": True})
+    assert started["job_state"]["job"]["display"]["state_label"] == "Draft — setup incomplete"
+
+    value = {"greeting": "Hi", "signature": "The team"}
+    _invoke(client, slug, "job.configure", {"revision": "0", "value": value})
+    greeted = _invoke(client, slug, "job.greet", {"revision": "1"})["job_state"]
+
+    assert [case["status"] for case in greeted["cases"]] == ["completed", "completed", "awaiting"]
+    assert greeted["job"]["status"] == "awaiting"
+    assert greeted["job"]["information"]["cost"]["total_cost"] == 0.6
+
+    # A completed job never keeps the draft label, with or without a signature.
+    other = _action_payload(slug, action="job.start", action_input={"count": 1}, job_id="job-cfg-6")
+    request = _a2a_request(method="supervaizer/action.invoke", params=other)
+    completed = client.post("/a2a", json=request).json()["result"]["job_state"]["job"]
+    assert completed["status"] == "completed"
+    assert "state_label" not in completed["display"]
+
+
 def test_configurator_negotiates_the_schema_version(client):
     from agent_configurator import configurator_document
 

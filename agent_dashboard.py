@@ -25,7 +25,9 @@ def dataset_definition() -> dict[str, Any]:
     return {
         "id": DATASET_ID,
         "label": "Hello cases",
-        "scope": "mission",
+        # Workspace scope (the default): Studio runs a dataset query from a job page
+        # only for a workspace-scoped dataset. The dashboards scope the rows themselves.
+        "scope": "workspace",
         "auto_surface": True,
         "display": {"columns": COLUMNS},
     }

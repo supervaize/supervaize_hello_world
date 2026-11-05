@@ -52,11 +52,11 @@ def readiness(job_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def job_display(job_id: str) -> dict[str, str]:
+def job_display(job_id: str, status: str = "") -> dict[str, str]:
     """Agent vocabulary for Studio's job list and title row (``job_state.job.display``)."""
     display = {"entity_label": "Hello job"}
-    if not _ready(job_id):
-        # No label once ready: Studio then shows its own job status.
+    if status != "completed" and not _ready(job_id):
+        # No label once ready or completed: Studio then shows its own job status.
         display["state_label"] = "Draft — setup incomplete"
     return display
 

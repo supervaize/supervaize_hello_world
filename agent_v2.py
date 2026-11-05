@@ -262,7 +262,7 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
         job_state = _jobs.get(_job_id(data))
         if result["status"] == "ok" and job_state:
             # Studio refreshes the job's display labels only from a job_state.
-            job_state["job"]["display"] = job_display(_job_id(data))
+            job_state["job"]["display"] = job_display(_job_id(data), job_state["job"]["status"])
             result["job_state"] = job_state
         return result
     if action == GREET_ACTION:
@@ -423,9 +423,17 @@ def _greet(data: dict[str, Any]) -> dict[str, Any]:
     job_id = _job_id(data)
     if refusal := greet_refusal(job_id, _input(data)):
         return refusal
-    # ponytail: replaces the cases, review case included; a real agent would add to its job store
-    hello_cases = [case for case in _jobs.get(job_id, {}).get("cases", []) if "say-hello" in case["steps"][-1]["id"]]
-    job_state = _simple_job_state(data, count=len(hello_cases) or 1, with_human=False)
+    # Only the hello cases are sent again. A case that waits for a person stays as it is:
+    # Studio keeps every case it knows, so a case dropped from the state would wait forever.
+    existing = _jobs.get(job_id, {}).get("cases", [])
+    kept = [case for case in existing if "say-hello" not in case["steps"][-1]["id"]]
+    config = job_config(job_id)
+    cases = [_hello_case(job_id, index, config) for index in range(1, (len(existing) - len(kept) or 1) + 1)] + kept
+    status = "awaiting" if any(case["status"] == "awaiting" for case in cases) else "completed"
+    job_state = {
+        "job": _job_snapshot(data, job_id=job_id, status=status, agent_slug=SIMPLE_AGENT_SLUG, cases=cases),
+        "cases": cases,
+    }
     _jobs[job_id] = job_state
     return _ok("job.greeted", job_id=job_id, job_state=job_state)
 
@@ -585,7 +593,7 @@ def _job_snapshot(
         "source": {"type": "fresh_start"},
     }
     if agent_slug == SIMPLE_AGENT_SLUG:
-        snapshot["display"] = job_display(job_id)
+        snapshot["display"] = job_display(job_id, status)
     if cases is not None:
         # Studio reads a v2 job's cost from here; it does not add up the case costs.
         # ponytail: every planned step counts, even one a rule later stops.

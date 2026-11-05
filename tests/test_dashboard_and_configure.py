@@ -22,7 +22,8 @@ def test_registration_declares_dataset_and_analytics_surface():
     assert "mission.agent.dataset.hello_cases" in registration.capabilities.surfaces
     query = next(a for a in registration.capabilities.actions if a.id == "dataset.hello_cases.query")
     assert query.mutating is False
-    assert query.scope == "mission"
+    # Studio runs a dataset query from a job page only for a workspace-scoped dataset.
+    assert query.scope == "workspace"
 
 
 def test_analytics_surface_is_a_dashboard_with_metrics_and_widgets(client):

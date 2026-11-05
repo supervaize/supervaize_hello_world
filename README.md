@@ -17,6 +17,8 @@ This project showcases all core Supervaizer concepts:
 
 Each topic has a guide at [docs.runwaize.com](https://docs.runwaize.com/docs/supervaizer-controller/core-concepts).
 
+The controller registers two agents: **Hello World AI Agent**, which shows every topic, and **Human-in-the-Loop Agent**, a smaller agent whose cases all wait for an approval.
+
 ## Project Structure
 
 ```
@@ -110,9 +112,9 @@ just test
 
 ## Shared Dashboard and Metrics
 
-The simple agent declares the `mission.analytics` surface and a mission-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows.
+The simple agent declares the `mission.analytics` surface and a workspace-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows.
 
-The same builder answers the `job.analytics` surface: Studio shows it as a **Job Analytics** section on each job page (KPI cards and the chart, no table), and the agent scopes the dataset to the job with a `job_ref` in the dataset input. See the [analytics guide](https://docs.runwaize.com/docs/supervaizer-controller/job-analytics).
+The same builder answers the `job.analytics` surface: Studio shows it as a **Job Analytics** section on each job page (KPI cards and the chart, no table), and the agent scopes the rows to the job with a `job_ref` in the dataset input. The dataset itself is workspace-scoped: Studio runs a dataset query from a job page only for such a dataset. See the [analytics guide](https://docs.runwaize.com/docs/supervaizer-controller/job-analytics).
 
 The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
 
@@ -122,7 +124,7 @@ The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is th
 
 ## Human in the Loop
 
-The simple agent's start form has an **Add human in the loop** switch. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the switch on, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
+The simple agent's start form has an **Add human in the loop** checkbox. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the box checked, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
 
 ## Steps, deliverables and costs
 
@@ -159,7 +161,7 @@ See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10
 
 ## Job Configurator
 
-The `simple_agent` declares the `job.configurator` surface (`agent_configurator.py`). Studio then opens the job page on a **Configure** tab and draws the agent's A2UI `Configurator` document, one tab per section:
+The `simple_agent` declares the `job.configurator` surface (`agent_configurator.py`). The job page then has a **Configure** tab next to **Operations**. Studio opens a job on Configure while it has no case, and on Operations after that. Studio draws the agent's A2UI `Configurator` document, one tab per section:
 
 | Section | Component | What it shows |
 | --- | --- | --- |
