@@ -14,9 +14,6 @@ import shortuuid
 from supervaizer import (
     Account,
     Agent,
-    AgentMethod,
-    AgentMethodField,
-    AgentMethods,
     Parameter,
     ParametersSetup,
     Server,
@@ -60,35 +57,6 @@ simple_agent_parameters = ParametersSetup.from_list([
 ])
 
 
-# Define the start method for the agent
-job_start_method = AgentMethod(
-    name="start",
-    method="agent_simple.job_start",
-    is_async=False,
-    params={"action": "start"},
-    fields=[
-        AgentMethodField(
-            name="How many times to say hello",
-            type=int,
-            field_type="IntegerField",
-            required=True,
-        )
-    ],
-)
-job_stop_method = AgentMethod(
-    name="stop",
-    method="agent_simple.job_stop",
-    is_async=False,
-    params={"action": "stop"},
-    description="Stop the running job",
-)
-job_status_method = AgentMethod(
-    name="status",
-    method="agent_simple.job_status",
-    is_async=False,
-    params={"action": "status"},
-    description="Get the status of the agent",
-)
 # Define the Agent
 simple_agent: Agent = Agent(
     name=agent_name,
@@ -97,11 +65,6 @@ simple_agent: Agent = Agent(
     version=AGENT_VERSION,
     description="This is a test agent",
     tags=["hello world", "ai agent"],
-    methods=AgentMethods(
-        job_start=job_start_method,
-        job_stop=job_stop_method,
-        job_status=job_status_method,
-    ),
     parameters_setup=simple_agent_parameters,
     data_resources=[contacts_resource],
     supervaizer_v2_registration=build_simple_agent_v2_registration(AGENT_VERSION),
@@ -111,41 +74,6 @@ simple_agent: Agent = Agent(
 #### HUMAN-IN-THE-LOOP AGENT ####
 human_loop_agent_name = "Human-in-the-Loop Agent"
 
-human_loop_job_start = AgentMethod(
-    name="start",
-    method="agent_human_loop.job_start",
-    is_async=False,
-    params={"action": "start"},
-    fields=[
-        AgentMethodField(
-            name="How many cases to run",
-            type=int,
-            field_type="IntegerField",
-            required=True,
-        )
-    ],
-)
-human_loop_job_stop = AgentMethod(
-    name="stop",
-    method="agent_human_loop.job_stop",
-    is_async=False,
-    params={"action": "stop"},
-    description="Stop the running job",
-)
-human_loop_job_status = AgentMethod(
-    name="status",
-    method="agent_human_loop.job_status",
-    is_async=False,
-    params={"action": "status"},
-    description="Get the status of the agent",
-)
-human_loop_human_answer = AgentMethod(
-    name="human_answer",
-    method="agent_human_loop.handle_human_input",
-    is_async=False,
-    fields=[],
-)
-
 human_loop_agent: Agent = Agent(
     name=human_loop_agent_name,
     id=shortuuid.uuid(human_loop_agent_name),
@@ -153,12 +81,6 @@ human_loop_agent: Agent = Agent(
     version="1.0",
     description="Runs cases with a human approval step before each case completes.",
     tags=["hello world", "human in the loop", "approval"],
-    methods=AgentMethods(
-        job_start=human_loop_job_start,
-        job_stop=human_loop_job_stop,
-        job_status=human_loop_job_status,
-        human_answer=human_loop_human_answer,
-    ),
     supervaizer_v2_registration=build_human_loop_v2_registration("1.0"),
 )
 

@@ -6,19 +6,29 @@ A minimal example demonstrating how to build and deploy agents with **Supervaize
 
 This project showcases all core Supervaizer concepts:
 
-- **Agent Parameters** — Defining environment variables and secrets
-- **Agent Methods** — Implementing `start`, `stop`, and `status` handlers
-- **Server Configuration** — A2A protocol support and admin interface
-- **Cloud Deployment** — One-click Vercel deployment
+- **Registration** — What Studio can show (surfaces) and call (actions)
+- **Jobs, cases and steps** — A start form, completed cases, step costs and a deliverable
+- **Agent parameters** — Environment variables and secrets set in Studio
+- **Human in the loop** — A step that waits for an approval
+- **Shared resources** — A contact list that Studio can list, edit and import
+- **Rule checkpoints** — Mission rules that allow, pause or stop a step
+- **Configure screen and analytics** — Agent-defined A2UI surfaces on the job page
+- **Scheduled starts** and **Cloud deployment** on Vercel
+
+Each topic has a guide at [docs.runwaize.com](https://docs.runwaize.com/docs/supervaizer-controller/core-concepts).
 
 ## Project Structure
 
 ```
 supervaize_hello_world/
-├── supervaizer_control.py   # Main controller configuration
-├── agent_v2.py              # Supervaizer v2 registration (SDK builder) and A2UI handlers
-├── agent_configurator.py    # Job Configurator A2UI surface example
-├── agent_simple.py          # Agent logic (job_start, job_stop, job_status)
+├── supervaizer_control.py   # Agents, parameters, server, handler registration
+├── agent_v2.py              # Registration, surface handlers, action dispatcher, job state
+├── agent_configurator.py    # Configure screen (job.configurator surface)
+├── agent_dashboard.py       # Job and mission analytics dashboards
+├── agent_data_resource.py   # Shared contacts resource
+├── agent_deliverable.py     # Greeting card artifact
+├── agent_rules.py           # Rule checkpoints
+├── tests/                   # Tests that play Studio against the controller
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template
 └── README.md
@@ -28,7 +38,7 @@ supervaize_hello_world/
 
 - Python 3.12 or higher
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
-- An account at [supervaize](app.supervaize.com)
+- An account at [Supervaize](https://app.supervaize.com)
 
 ## Getting Started
 
@@ -199,7 +209,7 @@ Edit `supervaizer_control.py` to customize:
 
 - Agent metadata (name, description, tags)
 - Parameters and secrets
-- Agent methods and their handlers
+- Surfaces, actions and their handlers
 
 ## Cloud Deployment
 
