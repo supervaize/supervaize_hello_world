@@ -100,7 +100,11 @@ just test
 
 ## Shared Dashboard and Metrics
 
-The simple agent declares the `mission.analytics` surface and a mission-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows. The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
+The simple agent declares the `mission.analytics` surface and a mission-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows.
+
+The same builder answers the `job.analytics` surface: Studio shows it as a **Job Analytics** section on each job page (KPI cards and the chart, no table), and the agent scopes the dataset to the job with a `job_ref` in the dataset input. See the [analytics guide](https://docs.runwaize.com/docs/supervaizer-controller/job-analytics).
+
+The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
 
 ## Configure Form
 

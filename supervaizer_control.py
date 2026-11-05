@@ -24,7 +24,11 @@ from supervaizer import (
 
 import agent_rules
 from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION, GREET_ACTION
-from agent_dashboard import ANALYTICS_SURFACE, DATASET_QUERY_ACTION
+from agent_dashboard import (
+    ANALYTICS_SURFACE,
+    DATASET_QUERY_ACTION,
+    JOB_ANALYTICS_SURFACE,
+)
 from agent_data_resource import contacts_resource
 from agent_v2 import (
     CONTACT_ACTIONS,
@@ -176,7 +180,7 @@ sv_server: Server = Server(
 
 
 def _register_v2_handlers(server: Server) -> None:
-    for surface in ("job.start", "case.step.awaiting", CONFIGURATOR_SURFACE, ANALYTICS_SURFACE):
+    for surface in ("job.start", "case.step.awaiting", CONFIGURATOR_SURFACE, ANALYTICS_SURFACE, JOB_ANALYTICS_SURFACE):
         server.register_v2_surface(
             surface,
             handle_simple_v2_surface,

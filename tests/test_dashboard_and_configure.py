@@ -56,6 +56,27 @@ def test_dataset_query_returns_the_cases_started_so_far(client):
     assert any(row["job_id"] == "job-dash-1" for row in awaiting["rows"])
 
 
+def test_job_analytics_scopes_the_dashboard_to_one_job(client):
+    from supervaizer_control import simple_agent
+
+    slug = simple_agent.slug
+    assert "job.analytics" in simple_agent.supervaizer_v2_registration.capabilities.surfaces
+    _invoke(client, slug, "job.start", {"count": 2}, job_id="job-dash-2")
+    _invoke(client, slug, "job.start", {"count": 1}, job_id="job-dash-3")
+
+    params = {**_surface_payload(slug, surface="job.analytics"), "job_id": "job-dash-2"}
+    request = _a2a_request(method="supervaizer/surface.load", params=params)
+    document = client.post("/a2a", json=request).json()["result"]["document"]
+    assert document["type"] == "Dashboard"
+    dataset_input = document["datasets"][0]["input"]
+    assert dataset_input["job_ref"] == "job-dash-2"
+
+    # Studio sends the dataset input back with the query.
+    rows = _invoke(client, slug, "dataset.hello_cases.query", dataset_input)["effects"][0]["rows"]
+    assert {row["job_id"] for row in rows} == {"job-dash-2"}
+    assert len(rows) == 2
+
+
 def test_configure_form_fields_shape_the_case_messages(client):
     from supervaizer_control import simple_agent
 

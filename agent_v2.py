@@ -29,6 +29,7 @@ from agent_configurator import (
 from agent_dashboard import (
     ANALYTICS_SURFACE,
     DATASET_QUERY_ACTION,
+    JOB_ANALYTICS_SURFACE,
     analytics_document,
     dataset_definition,
     query_dataset,
@@ -106,7 +107,7 @@ def build_simple_agent_v2_registration(
             _CONTACTS_LIST_ACTION,
             ARTIFACT_ACTION,
         ],
-        surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE],
+        surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE, JOB_ANALYTICS_SURFACE],
         resources=[_contacts_resource_definition()],
         artifact_types=ARTIFACT_TYPES,
         # The SDK derives dataset.hello_cases.query and the dataset surface.
@@ -139,6 +140,8 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
         return _surface_result(data, configurator_document(_job_id(data), _input(data)))
     if data.get("surface") == AWAITING_SURFACE:
         return _surface_result(data, _awaiting_document(data))
+    if data.get("surface") == JOB_ANALYTICS_SURFACE:
+        return _surface_result(data, analytics_document(_input(data), job_id=_job_id(data)))
     if data.get("surface") == ANALYTICS_SURFACE:
         return _surface_result(data, analytics_document(_input(data)))
     return _surface_result(
