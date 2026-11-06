@@ -8,6 +8,7 @@ gate on ``job.sync``, parks a paused step as awaiting and continues on
 """
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from supervaizer import rule_controls
 from supervaizer.contracts import SupervaizerV2AgentRegistrationContract
@@ -175,10 +176,13 @@ def test_paused_checkpoint_parks_the_step_until_studio_resumes(client, studio):
 
     assert rejected["type"] == "rule.checkpoint.rejected"
     assert _sync(client, "job-rules-2")["job_state"]["job"]["status"] == "awaiting"
+    assert fake.refreshes == ["job-rules-2"]  # the one of job.start
 
     resumed = _resume(client, fake, "job-rules-2", case)
 
     assert resumed["type"] == "rule.checkpoint.resumed"
+    # Studio reads no job_state from a resume answer: the agent asks for a job.sync again.
+    assert fake.refreshes == ["job-rules-2", "job-rules-2"]
     assert resumed["job_state"]["job"]["status"] == "completed"
     assert all(step["status"] == "completed" for c in resumed["job_state"]["cases"] for step in c["steps"])
     assert "awaiting" not in resumed["job_state"]["cases"][0]["steps"][-1]
@@ -210,6 +214,30 @@ def test_stopped_checkpoint_fails_the_step(client, studio):
     assert len(fake.posts) == 1
     # Nothing waits: a late decision is rejected.
     assert _resume(client, fake, "job-rules-4", state["cases"][0])["type"] == "rule.checkpoint.rejected"
+
+
+def test_refused_checkpoint_reports_studios_answer_and_is_asked_again(client, studio, monkeypatch):
+    """A failed checkpoint call keeps its place: the next job.sync asks about the same step."""
+    fake = studio("allow", "allow")
+    _start(client, "job-rules-5", count=1, rule_snapshot=SNAPSHOT)
+    refusal = httpx.Response(
+        400, text='{"detail":"Job has a blocking rule checkpoint."}', request=httpx.Request("POST", "https://studio.example")
+    )
+
+    async def refuse(url, *, headers, json):
+        return refusal
+
+    monkeypatch.setattr(rule_controls._httpx_client, "post", refuse)
+
+    failed = _sync(client, "job-rules-5")
+
+    assert failed["type"] == "job.sync.failed"
+    assert failed["message"] == 'Rule checkpoint request failed: {"detail":"Job has a blocking rule checkpoint."}'
+
+    monkeypatch.setattr(rule_controls._httpx_client, "post", fake.post)
+
+    assert _sync(client, "job-rules-5")["job_state"]["job"]["status"] == "completed"
+    assert [post["body"]["phase"] for post in fake.posts] == ["before", "after"]
 
 
 def test_refresh_request_asks_studio_to_sync_the_job(monkeypatch):

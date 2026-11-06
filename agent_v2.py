@@ -16,13 +16,20 @@ import agent_rules
 from agent_configurator import (
     CONFIGURATOR_SURFACE,
     CONFIGURE_ACTION,
+    GREET_ACTION,
     configurator_document,
     configure,
+    greet_refusal,
     job_config,
+    job_display,
+)
+from agent_configurator import (
+    message as greeting_message,
 )
 from agent_dashboard import (
     ANALYTICS_SURFACE,
     DATASET_QUERY_ACTION,
+    JOB_ANALYTICS_SURFACE,
     analytics_document,
     dataset_definition,
     query_dataset,
@@ -34,7 +41,12 @@ from agent_data_resource import (
     _list_contacts,
     _update_contact,
 )
-from agent_deliverable import ARTIFACT_ACTION, ARTIFACT_TYPES, greeting_card, load_artifact
+from agent_deliverable import (
+    ARTIFACT_ACTION,
+    ARTIFACT_TYPES,
+    greeting_card,
+    load_artifact,
+)
 
 SIMPLE_AGENT_SLUG = "hello-world-ai-agent"
 HUMAN_LOOP_AGENT_SLUG = "human-in-the-loop-agent"
@@ -89,11 +101,13 @@ def build_simple_agent_v2_registration(
             # Studio's Stop and Complete buttons call job.stop on a v2 agent.
             "job.stop",
             AWAITING_SUBMIT_ACTION,
+            # Job-scoped by default, as every Configurator binding must be.
             CONFIGURE_ACTION,
+            GREET_ACTION,
             _CONTACTS_LIST_ACTION,
             ARTIFACT_ACTION,
         ],
-        surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE],
+        surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE, JOB_ANALYTICS_SURFACE],
         resources=[_contacts_resource_definition()],
         artifact_types=ARTIFACT_TYPES,
         # The SDK derives dataset.hello_cases.query and the dataset surface.
@@ -126,6 +140,8 @@ def handle_simple_v2_surface(request: Any) -> dict[str, Any]:
         return _surface_result(data, configurator_document(_job_id(data), _input(data)))
     if data.get("surface") == AWAITING_SURFACE:
         return _surface_result(data, _awaiting_document(data))
+    if data.get("surface") == JOB_ANALYTICS_SURFACE:
+        return _surface_result(data, analytics_document(_input(data), job_id=_job_id(data)))
     if data.get("surface") == ANALYTICS_SURFACE:
         return _surface_result(data, analytics_document(_input(data)))
     return _surface_result(
@@ -218,7 +234,7 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
         try:
             job_state = await agent_rules.sync(_job_id(data))
         except RuntimeError as error:  # Studio refused or lost a checkpoint call
-            return _error("job.sync.failed", job_id=_job_id(data), message=str(error))
+            return _error("job.sync.failed", job_id=_job_id(data), message=agent_rules.failure(error))
         job_state = job_state or _jobs.get(_job_id(data)) or _simple_job_state(
             data, count=_count(data, default=1), with_human=False
         )
@@ -242,7 +258,15 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
             job_state=job_state,
         )
     if action == CONFIGURE_ACTION:
-        return configure(_job_id(data), _input(data))
+        result = configure(_job_id(data), _input(data))
+        job_state = _jobs.get(_job_id(data))
+        if result["status"] == "ok" and job_state:
+            # Studio refreshes the job's display labels only from a job_state.
+            job_state["job"]["display"] = job_display(_job_id(data), job_state["job"]["status"])
+            result["job_state"] = job_state
+        return result
+    if action == GREET_ACTION:
+        return _greet(data)
     if action == DATASET_QUERY_ACTION:
         return query_dataset(_jobs, _input(data))
     if action.startswith("resource.contacts."):
@@ -394,13 +418,29 @@ def _simple_job_state(data: dict[str, Any], *, count: int, with_human: bool) -> 
     }
 
 
+def _greet(data: dict[str, Any]) -> dict[str, Any]:
+    """The Configurator's primary action: new hello cases from the saved configuration."""
+    job_id = _job_id(data)
+    if refusal := greet_refusal(job_id, _input(data)):
+        return refusal
+    # Only the hello cases are sent again. A case that waits for a person stays as it is:
+    # Studio keeps every case it knows, so a case dropped from the state would wait forever.
+    existing = _jobs.get(job_id, {}).get("cases", [])
+    kept = [case for case in existing if "say-hello" not in case["steps"][-1]["id"]]
+    config = job_config(job_id)
+    cases = [_hello_case(job_id, index, config) for index in range(1, (len(existing) - len(kept) or 1) + 1)] + kept
+    status = "awaiting" if any(case["status"] == "awaiting" for case in cases) else "completed"
+    job_state = {
+        "job": _job_snapshot(data, job_id=job_id, status=status, agent_slug=SIMPLE_AGENT_SLUG, cases=cases),
+        "cases": cases,
+    }
+    _jobs[job_id] = job_state
+    return _ok("job.greeted", job_id=job_id, job_state=job_state)
+
+
 def _hello_case(job_id: str, index: int, config: dict[str, Any]) -> dict[str, Any]:
     name, city = random.choice(NAMES), random.choice(CITIES)
-    message = f"{config['greeting']}, {name} from {city}!"
-    if config.get("signature"):
-        message += f" {config['signature']}"
-    if config.get("shout"):
-        message = message.upper()
+    message = greeting_message(config, name, city)
     case_id = f"{job_id}-case-{index}"
     return {
         "id": case_id,
@@ -494,7 +534,7 @@ async def _resume_rule_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
     try:
         job_state = await agent_rules.resume(data)
     except (ValueError, RuntimeError) as error:  # ValidationError is a ValueError
-        return _error("rule.checkpoint.rejected", job_id=data.get("job_id"), message=str(error))
+        return _error("rule.checkpoint.rejected", job_id=data.get("job_id"), message=agent_rules.failure(error))
     _jobs[job_state["job"]["id"]] = job_state
     return _ok(
         "rule.checkpoint.resumed",
@@ -552,6 +592,8 @@ def _job_snapshot(
         "status": status,
         "source": {"type": "fresh_start"},
     }
+    if agent_slug == SIMPLE_AGENT_SLUG:
+        snapshot["display"] = job_display(job_id, status)
     if cases is not None:
         # Studio reads a v2 job's cost from here; it does not add up the case costs.
         # ponytail: every planned step counts, even one a rule later stops.

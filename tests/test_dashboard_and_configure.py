@@ -22,7 +22,8 @@ def test_registration_declares_dataset_and_analytics_surface():
     assert "mission.agent.dataset.hello_cases" in registration.capabilities.surfaces
     query = next(a for a in registration.capabilities.actions if a.id == "dataset.hello_cases.query")
     assert query.mutating is False
-    assert query.scope == "mission"
+    # Studio runs a dataset query from a job page only for a workspace-scoped dataset.
+    assert query.scope == "workspace"
 
 
 def test_analytics_surface_is_a_dashboard_with_metrics_and_widgets(client):
@@ -50,10 +51,32 @@ def test_dataset_query_returns_the_cases_started_so_far(client):
     assert len(rows) == 3
     assert {row["status"] for row in rows} == {"completed", "awaiting"}
     assert sum(row["completed"] for row in rows) == 2
+    assert all(row["city"] for row in rows)  # the review case has no city, and no null group
 
     awaiting = _invoke(client, simple_agent.slug, "dataset.hello_cases.query", {"status": "awaiting"})["effects"][0]
     assert all(row["status"] == "awaiting" for row in awaiting["rows"])
     assert any(row["job_id"] == "job-dash-1" for row in awaiting["rows"])
+
+
+def test_job_analytics_scopes_the_dashboard_to_one_job(client):
+    from supervaizer_control import simple_agent
+
+    slug = simple_agent.slug
+    assert "job.analytics" in simple_agent.supervaizer_v2_registration.capabilities.surfaces
+    _invoke(client, slug, "job.start", {"count": 2}, job_id="job-dash-2")
+    _invoke(client, slug, "job.start", {"count": 1}, job_id="job-dash-3")
+
+    params = {**_surface_payload(slug, surface="job.analytics"), "job_id": "job-dash-2"}
+    request = _a2a_request(method="supervaizer/surface.load", params=params)
+    document = client.post("/a2a", json=request).json()["result"]["document"]
+    assert document["type"] == "Dashboard"
+    dataset_input = document["datasets"][0]["input"]
+    assert dataset_input["job_ref"] == "job-dash-2"
+
+    # Studio sends the dataset input back with the query.
+    rows = _invoke(client, slug, "dataset.hello_cases.query", dataset_input)["effects"][0]["rows"]
+    assert {row["job_id"] for row in rows} == {"job-dash-2"}
+    assert len(rows) == 2
 
 
 def test_configure_form_fields_shape_the_case_messages(client):
