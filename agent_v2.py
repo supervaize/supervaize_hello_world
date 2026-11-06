@@ -234,7 +234,7 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
         try:
             job_state = await agent_rules.sync(_job_id(data))
         except RuntimeError as error:  # Studio refused or lost a checkpoint call
-            return _error("job.sync.failed", job_id=_job_id(data), message=str(error))
+            return _error("job.sync.failed", job_id=_job_id(data), message=agent_rules.failure(error))
         job_state = job_state or _jobs.get(_job_id(data)) or _simple_job_state(
             data, count=_count(data, default=1), with_human=False
         )
@@ -534,7 +534,7 @@ async def _resume_rule_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
     try:
         job_state = await agent_rules.resume(data)
     except (ValueError, RuntimeError) as error:  # ValidationError is a ValueError
-        return _error("rule.checkpoint.rejected", job_id=data.get("job_id"), message=str(error))
+        return _error("rule.checkpoint.rejected", job_id=data.get("job_id"), message=agent_rules.failure(error))
     _jobs[job_state["job"]["id"]] = job_state
     return _ok(
         "rule.checkpoint.resumed",

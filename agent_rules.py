@@ -129,7 +129,19 @@ async def resume(data: dict[str, Any]) -> dict[str, Any]:
     response = await pending["waiter"]
     pending["waiter"] = None
     await _run(pending, response)
+    # Studio only delivers the decision: it reads no job_state from this answer,
+    # so it sees the resumed step on the job.sync that this request asks for.
+    schedule_refresh(decision.job_id)
     return pending["job_state"]
+
+
+def failure(error: Exception) -> str:
+    """Why a checkpoint call failed, with Studio's answer: the SDK keeps that only as the cause."""
+    cause = error.__cause__
+    answer = getattr(getattr(cause, "response", None), "text", "")
+    message = f"{error}: {answer or repr(cause)}"[:300] if cause else str(error)
+    log.warning(f"[Rules] {message}")
+    return message
 
 
 async def _run(pending: dict[str, Any], decision: RuleCheckpointResponse | None = None) -> None:
