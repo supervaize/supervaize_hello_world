@@ -51,6 +51,7 @@ def test_dataset_query_returns_the_cases_started_so_far(client):
     assert len(rows) == 3
     assert {row["status"] for row in rows} == {"completed", "awaiting"}
     assert sum(row["completed"] for row in rows) == 2
+    assert all(row["city"] for row in rows)  # the review case has no city, and no null group
 
     awaiting = _invoke(client, simple_agent.slug, "dataset.hello_cases.query", {"status": "awaiting"})["effects"][0]
     assert all(row["status"] == "awaiting" for row in awaiting["rows"])

@@ -117,7 +117,8 @@ def query_dataset(jobs: dict[str, dict[str, Any]], action_input: dict[str, Any])
             "case_id": case["id"],
             "title": case.get("title"),
             "name": case.get("metadata", {}).get("name"),
-            "city": case.get("metadata", {}).get("city"),
+            # A review case has no city: name the group, or the chart shows a "null" bar.
+            "city": case.get("metadata", {}).get("city") or "(no city)",
             "status": case.get("status"),
             "message": case.get("metadata", {}).get("message"),
             "completed": 1 if case.get("status") == "completed" else 0,
