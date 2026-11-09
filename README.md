@@ -6,19 +6,31 @@ A minimal example demonstrating how to build and deploy agents with **Supervaize
 
 This project showcases all core Supervaizer concepts:
 
-- **Agent Parameters** — Defining environment variables and secrets
-- **Agent Methods** — Implementing `start`, `stop`, and `status` handlers
-- **Server Configuration** — A2A protocol support and admin interface
-- **Cloud Deployment** — One-click Vercel deployment
+- **Registration** — What Studio can show (surfaces) and call (actions)
+- **Jobs, cases and steps** — A start form, completed cases, step costs and a deliverable
+- **Agent parameters** — Environment variables and secrets set in Studio
+- **Human in the loop** — A step that waits for an approval
+- **Shared resources** — A contact list that Studio can list, edit and import
+- **Rule checkpoints** — Mission rules that allow, pause or stop a step
+- **Configure screen and analytics** — Agent-defined A2UI surfaces on the job page
+- **Scheduled starts** and **Cloud deployment** on Vercel
+
+Each topic has a guide at [docs.runwaize.com](https://docs.runwaize.com/docs/supervaizer-controller/core-concepts).
+
+The controller registers two agents: **Hello World AI Agent**, which shows every topic, and **Human-in-the-Loop Agent**, a smaller agent whose cases all wait for an approval.
 
 ## Project Structure
 
 ```
 supervaize_hello_world/
-├── supervaizer_control.py   # Main controller configuration
-├── agent_v2.py              # Supervaizer v2 registration (SDK builder) and A2UI handlers
-├── agent_configurator.py    # Job Configurator A2UI surface example
-├── agent_simple.py          # Agent logic (job_start, job_stop, job_status)
+├── supervaizer_control.py   # Agents, parameters, server, handler registration
+├── agent_v2.py              # Registration, surface handlers, action dispatcher, job state
+├── agent_configurator.py    # Configure screen (job.configurator surface)
+├── agent_dashboard.py       # Job and mission analytics dashboards
+├── agent_data_resource.py   # Shared contacts resource
+├── agent_deliverable.py     # Greeting card artifact
+├── agent_rules.py           # Rule checkpoints
+├── tests/                   # Tests that play Studio against the controller
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template
 └── README.md
@@ -28,7 +40,7 @@ supervaize_hello_world/
 
 - Python 3.12 or higher
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
-- An account at [supervaize](app.supervaize.com)
+- An account at [Supervaize](https://app.supervaize.com)
 
 ## Getting Started
 
@@ -100,15 +112,19 @@ just test
 
 ## Shared Dashboard and Metrics
 
-The simple agent declares the `mission.analytics` surface and a mission-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows. The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
+The simple agent declares the `mission.analytics` surface and a workspace-scoped dataset `hello_cases` (`agent_dashboard.py`). Studio shows an **Analytics** link on the mission page, loads the `Dashboard` document (one dataset with three KPI metrics: cases, distinct cities and completed ratio; a status filter; a Vega-Lite bar chart of cases by city; a table), then queries `dataset.hello_cases.query` and renders the rows.
+
+The same builder answers the `job.analytics` surface: Studio shows it as a **Job Analytics** section on each job page (KPI cards and the chart, no table), and the agent scopes the rows to the job with a `job_ref` in the dataset input. The dataset itself is workspace-scoped: Studio runs a dataset query from a job page only for such a dataset. See the [analytics guide](https://docs.runwaize.com/docs/supervaizer-controller/job-analytics).
+
+The rows come from the jobs this controller started, so on a serverless host they only cover the warm instance.
 
 ## Configure Form
 
-The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is the per-job configure form: greeting (text), signature (text) and shout (boolean). Saves go through `job.configure` with the revision they were made from, and the values shape the case messages of the next start.
+The Job Configurator (`job.configurator` surface, `agent_configurator.py`) is the Configure screen of a job. See [Job Configurator](#job-configurator) below.
 
 ## Human in the Loop
 
-The simple agent's start form has an **Add human in the loop** switch. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the switch on, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
+The simple agent's start form has an **Add human in the loop** checkbox. Each start creates `count` completed cases with random content (a name, a city and a greeting message in the case metadata; the greeting comes from the Job Configurator). With the box checked, one more case waits on a human approval step: Studio renders the `case.step.awaiting` surface and the agent completes the case on `step.awaiting.submit`. See `tests/test_hitl.py`.
 
 ## Steps, deliverables and costs
 
@@ -126,9 +142,9 @@ The simple agent declares `capabilities.rule_checkpoints` (version 1, phases `be
 
 1. `job.start` arrives with an opaque `rule_snapshot` in its input. The agent keeps the gate in memory and returns the steps as `pending`, without the greeting card. Studio knows a v2 case only once a job state has projected it, so no checkpoint is posted yet.
 2. Studio never polls a v2 job, so 2 seconds later the agent sends the controller event `supervaizer.v2.job.refresh_requested` from a background task. Studio handles it inline and calls `job.sync` on the agent; a blocking post would freeze the agent's event loop. If Studio is slower than 2 seconds, the job waits for a manual **Update**.
-3. `job.sync` posts a `before` and an `after` checkpoint per "Deliver greeting card" step to `{api_url}/api/v1/rule-checkpoints/`, with the greeting as business context. An `allow` on `before` completes **Start** and adds the card; an `allow` on `after` completes the step. A `stop` fails the step and the job, and the case delivers no card.
-4. A `pause` parks the step as `awaiting` with reason `rule_checkpoint` and action `rule.checkpoint.resume`. The decision is taken in Studio's guardrails UI, not through the step surface.
-5. Studio pushes the decision with `rule.checkpoint.resume`. The SDK's `resume_rule_checkpoint` matches it to the live gate, then the agent finishes the step and runs the remaining checkpoints. Studio sees the result on its next `job.sync`.
+3. `job.sync` posts a `before` and an `after` checkpoint per "Deliver greeting card" step to `{api_url}/api/v1/rule-checkpoints/`, with the greeting as business context. An `allow` on `before` completes **Start** and adds the card; an `allow` on `after` completes the step. A `stop` fails the step and the job, and the case delivers no card. If a checkpoint call fails, `job.sync` answers `job.sync.failed` with Studio's answer, and the next `job.sync` asks about the same step again.
+4. A `pause` parks the step as `awaiting` with reason `rule_checkpoint` and action `rule.checkpoint.resume`. The decision is taken in the **Rule activity** panel of the job page in Studio, not through the step surface.
+5. Studio pushes the decision with `rule.checkpoint.resume`. The SDK's `resume_rule_checkpoint` matches it to the live gate, then the agent finishes the step and runs the remaining checkpoints. Studio reads no job state from the answer to a decision, so the agent sends the refresh event again and Studio sees the result on that `job.sync`.
 
 Jobs started without rules behave as before. The gate lives in process memory: after a restart (a Vercel cold start) the agent answers a decision with `rule.checkpoint.rejected`. A real agent persists the snapshot with its job. See `tests/test_rule_checkpoints.py`.
 
@@ -145,7 +161,20 @@ See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10
 
 ## Job Configurator
 
-The `simple_agent` also declares the `job.configurator` surface (`agent_configurator.py`). Studio renders it on the job page as an A2UI `Configurator` document: one editable section with a greeting field. Saving invokes the bound `job.configure` action with `{"revision": ..., "value": {"greeting": ...}}`. A save made from a stale revision gets `configurator.conflict` back and Studio reloads the document. The saved greeting names the job's cases.
+The `simple_agent` declares the `job.configurator` surface (`agent_configurator.py`). The job page then has a **Configure** tab next to **Operations**. Studio opens a job on Configure while it has no case, and on Operations after that. Studio draws the agent's A2UI `Configurator` document, one tab per section:
+
+| Section | Component | What it shows |
+| --- | --- | --- |
+| Parameters | `Form` | Greeting, signature and shout. **Save parameters** invokes `job.configure` with `{"revision": ..., "value": {...}}`. |
+| Review & send | `Review` | The readiness checklist (a signature is required) and the primary action **Send greetings**. |
+| Links & exports | `Table` | A link and a sample greeting card opened through `artifact.get`. Schema 2 only. |
+
+- **Revision.** Every action quotes the revision it was made from. A stale one gets `configurator.conflict` back and Studio reloads the document.
+- **Readiness and primary action.** While an item is `blocked`, Studio disables **Send greetings**. The agent checks again in `job.greet`, which replaces the job's hello cases with new ones built from the saved configuration.
+- **Schema negotiation.** Studio sends `supported_schema_versions`; the agent answers at the highest shared version and only emits the `Table` at schema 2.
+- **Display labels.** `job_state.job.display` gives Studio the `Hello job` badge and the `Draft — setup incomplete` status until the checklist is done.
+
+Both actions are job-scoped and declared in the registration: Studio refuses a binding to an undeclared action. A new action changes the grant scopes, so the workspace must accept the agent grant again. See `tests/test_configurator.py` and the [Job Configurator guide](https://docs.runwaize.com/docs/supervaizer-controller/job-configurator).
 
 ## Testing the Agent
 
@@ -182,7 +211,7 @@ Edit `supervaizer_control.py` to customize:
 
 - Agent metadata (name, description, tags)
 - Parameters and secrets
-- Agent methods and their handlers
+- Surfaces, actions and their handlers
 
 ## Cloud Deployment
 

@@ -1,7 +1,9 @@
 """Shared dashboard example: a mission-level dataset with KPI metrics and a chart.
 
-Studio opens the ``mission.analytics`` surface from the mission page. The agent
-answers with a ``Dashboard`` document that declares datasets (with metric
+Studio opens the ``mission.analytics`` surface from the mission page, and shows
+the ``job.analytics`` surface as a Job Analytics section on each job page. The
+agent answers both with the same builder; the job dashboard scopes its dataset
+to the job. The agent answers with a ``Dashboard`` document that declares datasets (with metric
 reducers Studio turns into KPI cards), controls and widgets. Studio then calls
 ``dataset.<id>.query`` for each dataset and renders tables and Vega-Lite charts
 from the returned rows.
@@ -12,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 ANALYTICS_SURFACE = "mission.analytics"
+JOB_ANALYTICS_SURFACE = "job.analytics"
 DATASET_ID = "hello_cases"
 DATASET_QUERY_ACTION = f"dataset.{DATASET_ID}.query"
 COLUMNS = ["job_id", "title", "name", "city", "status", "message"]
@@ -22,20 +25,27 @@ def dataset_definition() -> dict[str, Any]:
     return {
         "id": DATASET_ID,
         "label": "Hello cases",
-        "scope": "mission",
+        # Workspace scope (the default): Studio runs a dataset query from a job page
+        # only for a workspace-scoped dataset. The dashboards scope the rows themselves.
+        "scope": "workspace",
         "auto_surface": True,
         "display": {"columns": COLUMNS},
     }
 
 
-def analytics_document(surface_input: dict[str, Any]) -> dict[str, Any]:
-    """The shared dashboard: one dataset, three KPI cards, a status filter, a chart and a table."""
+def analytics_document(surface_input: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
+    """The shared dashboard: one dataset, three KPI cards, a status filter, a chart and a table.
+
+    With ``job_id`` it is the job dashboard: Studio sends ``job_ref`` back with every dataset query.
+    """
     status = str(surface_input.get("status") or "all")
     dataset_input = {"status": status}
+    if job_id:
+        dataset_input["job_ref"] = job_id
     return {
         "type": "Dashboard",
-        "id": "hello_world.mission.analytics",
-        "title": "Hello World analytics",
+        "id": f"hello_world.{'job' if job_id else 'mission'}.analytics",
+        "title": "Job analytics" if job_id else "Hello World analytics",
         "datasets": [
             {
                 "id": DATASET_ID,
@@ -98,21 +108,24 @@ def analytics_document(surface_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def query_dataset(jobs: dict[str, dict[str, Any]], action_input: dict[str, Any]) -> dict[str, Any]:
-    """One row per case of every job this controller started, filtered by the status control."""
+    """One row per case of the jobs this controller started, filtered by job and by the status control."""
     status = str(action_input.get("status") or "all")
+    job_ref = action_input.get("job_ref")
     rows = [
         {
             "job_id": job_id,
             "case_id": case["id"],
             "title": case.get("title"),
             "name": case.get("metadata", {}).get("name"),
-            "city": case.get("metadata", {}).get("city"),
+            # A review case has no city: name the group, or the chart shows a "null" bar.
+            "city": case.get("metadata", {}).get("city") or "(no city)",
             "status": case.get("status"),
             "message": case.get("metadata", {}).get("message"),
             "completed": 1 if case.get("status") == "completed" else 0,
             "total": 1,
         }
         for job_id, job_state in jobs.items()
+        if not job_ref or job_id == job_ref
         for case in job_state.get("cases", [])
         if status == "all" or case.get("status") == status
     ]
