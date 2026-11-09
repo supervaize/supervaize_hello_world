@@ -39,7 +39,7 @@ from agent_v2 import (
 
 #### SIMPLE AGENT ####
 agent_name = "Hello World AI Agent"
-AGENT_VERSION = "1.3"  # keep equal to pyproject.toml; `just deploy` checks and tags it
+AGENT_VERSION = "2.0"  # keep equal to pyproject.toml; `just deploy` checks and tags it
 
 # Define the parameters and secrets expected by the agent
 simple_agent_parameters = ParametersSetup.from_list([
