@@ -12,6 +12,7 @@ from supervaizer.contracts import (
     build_v2_agent_registration,
 )
 
+import agent_billing
 import agent_rules
 from agent_configurator import (
     CONFIGURATOR_SURFACE,
@@ -47,6 +48,15 @@ from agent_deliverable import (
     greeting_card,
     load_artifact,
 )
+from agent_setup import (
+    SETUP_PLAN,
+    STEP_COST,
+    SUGGEST_COUNT_ACTION,
+    TEST_ACTION,
+    cost_estimate,
+    suggest_count,
+    test_run,
+)
 
 SIMPLE_AGENT_SLUG = "hello-world-ai-agent"
 HUMAN_LOOP_AGENT_SLUG = "human-in-the-loop-agent"
@@ -73,8 +83,6 @@ AWAITING_FIELDS = [
 # Random case content, so every run looks different in Studio.
 NAMES = ("Ada", "Grace", "Linus", "Margaret", "Alan", "Hedy")
 CITIES = ("Paris", "Lisbon", "Nairobi", "Kyoto", "Montréal", "Tallinn")
-# Dollars per step; Studio adds step costs up into the case and job cost.
-STEP_COST = 0.1
 # Studio retries a scheduled firing with the same idempotency_key; it must get
 # the original job back, not a second one.
 # ponytail: in-memory, lost on restart; a real agent keys this on its job store
@@ -106,6 +114,8 @@ def build_simple_agent_v2_registration(
             GREET_ACTION,
             _CONTACTS_LIST_ACTION,
             ARTIFACT_ACTION,
+            SUGGEST_COUNT_ACTION,
+            TEST_ACTION,
         ],
         surfaces=["job.start", AWAITING_SURFACE, CONFIGURATOR_SURFACE, ANALYTICS_SURFACE, JOB_ANALYTICS_SURFACE],
         resources=[_contacts_resource_definition()],
@@ -116,6 +126,8 @@ def build_simple_agent_v2_registration(
         # Lets Studio start this agent in a mission with rules; the SDK adds
         # the rule.checkpoint.resume action (job scope) that Studio requires.
         rule_checkpoints={"phases": agent_rules.PHASES},
+        # Guided setup: Studio renders fields, validation and cost from the plan alone.
+        setup_plan=SETUP_PLAN,
     )
 
 
@@ -205,7 +217,17 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
     data = _request_dict(request)
     action = str(data.get("action") or "")
     if action == "job.start.preview":
-        return _ok("job.start.previewed", count=_count(data, default=3))
+        count = _count(data, default=3)
+        result = _ok("job.start.previewed", count=count)
+        result["setup_plan"] = {
+            **SETUP_PLAN.model_dump(mode="json"),
+            "cost_estimate": cost_estimate(count, _flag(data, "add_human_in_the_loop")).model_dump(mode="json"),
+        }
+        return result
+    if action == SUGGEST_COUNT_ACTION.id:
+        return suggest_count(_input(data).get("values") or {}, len(_list_contacts()))
+    if action == TEST_ACTION.id:
+        return test_run(_job_id(data), _input(data))
     if action == "job.start":
         idempotency_key = data.get("idempotency_key")
         if idempotency_key in _started_jobs:
@@ -220,6 +242,14 @@ async def handle_simple_v2_action(request: Any) -> dict[str, Any]:
             # checkpoints run on the first job.sync.
             agent_rules.open_gate(data, job_state)
             message = f"{count} hello case(s) held for Studio rule checkpoints"
+        else:
+            # Ungoverned hello cases are final at start, so their greetings are billable now.
+            agent_billing.report_hellos(
+                agent_slug=SIMPLE_AGENT_SLUG,
+                workspace_id=agent_billing.workspace_id(data),
+                job_id=job_state["job"]["id"],
+                count=count,
+            )
         result = _ok(
             "job.started",
             job_id=job_state["job"]["id"],
@@ -315,7 +345,16 @@ def _registration(
     artifact_types: list[dict[str, Any]] = (),
     scheduled_start: bool = False,
     rule_checkpoints: dict[str, Any] | None = None,
+    setup_plan: Any = None,
 ) -> SupervaizerV2AgentRegistrationContract:
+    job_policy: dict[str, Any] = {
+        "sync": {
+            "action": "job.sync",
+            "supported_statuses": ["active", "awaiting", "completed"],
+        }
+    }
+    if setup_plan is not None:
+        job_policy["setup"] = {"plan": setup_plan}
     return build_v2_agent_registration(
         agent_slug=agent_slug,
         display_name=display_name,
@@ -333,12 +372,7 @@ def _registration(
         # clock and calls the normal job.start). Omitted on the wire when False.
         scheduled_start=scheduled_start,
         rule_checkpoints=rule_checkpoints,
-        job_policy={
-            "sync": {
-                "action": "job.sync",
-                "supported_statuses": ["active", "awaiting", "completed"],
-            }
-        },
+        job_policy=job_policy,
     )
 
 

@@ -13,6 +13,9 @@ This project showcases all core Supervaizer concepts:
 - **Shared resources** — A contact list that Studio can list, edit and import
 - **Rule checkpoints** — Mission rules that allow, pause or stop a step
 - **Configure screen and analytics** — Agent-defined A2UI surfaces on the job page
+- **Guided setup** — A setup plan with validation, a help action, a cost range and a test run
+- **Agent profile** — A roster introduction and a full description for the agent page
+- **Billable consumption** — One SKU, reported to Studio per greeting
 - **Scheduled starts** and **Cloud deployment** on Vercel
 
 Each topic has a guide at [docs.runwaize.com](https://docs.runwaize.com/docs/supervaizer-controller/core-concepts).
@@ -30,6 +33,9 @@ supervaize_hello_world/
 ├── agent_data_resource.py   # Shared contacts resource
 ├── agent_deliverable.py     # Greeting card artifact
 ├── agent_rules.py           # Rule checkpoints
+├── agent_setup.py           # Guided setup plan, help action, test run
+├── agent_profile.py         # Introduction and full description
+├── agent_billing.py         # Billing catalog and consumption reports
 ├── tests/                   # Tests that play Studio against the controller
 ├── pyproject.toml           # Project dependencies
 ├── .envrc_template          # Environment variables template
@@ -158,6 +164,18 @@ The agent does not run a clock or parse cron. Studio owns the schedule and calls
 - a top-level `schedule` object (`schedule_id`, `schedule_name`, `run_id`, `run_number`, `occurrence_at`, `trigger`, `cron_expression`, `timezone`, `error_policy`). The agent only names it in its result message.
 
 See `tests/test_scheduling.py` and the SDK contract in `supervaizer/docs/2026_10_SCHEDULED_START.md`.
+
+## Guided Setup, Profile and Billing
+
+These use features of Supervaizer 1.9 to 1.11. All of them are optional for an agent.
+
+- **Setup plan** (`agent_setup.py`). `job_policy.setup.plan` declares the `count` field (1 to 100) and the human-review flag. `job.start.preview` answers with a cost range for the chosen count.
+- **Help action.** `count.suggest` (`kind="help"`) proposes one hello per contact. Studio shows the value as an editable draft.
+- **Test run.** `job.test` (`dry_run=True`) previews a greeting. It creates no case and costs nothing.
+- **Profile** (`agent_profile.py`). Studio shows `introduction` in the roster and the chat opening, and `full_description` on the agent page.
+- **Billing** (`agent_billing.py`). The catalog has one SKU, `hello_message`. After an ungoverned `job.start`, the agent reports one record per job in the background, with the key `<job_id>:hello_message`. The owner workspace sets the price in Studio. While the SKU has no price, Studio rejects the record with `no_price`, and the agent logs it.
+
+A new action changes the scopes of the workspace grant, so the owner workspace accepts the grant again on the agent page. See `tests/test_sdk_1_11_features.py`.
 
 ## Job Configurator
 

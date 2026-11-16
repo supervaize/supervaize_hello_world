@@ -24,6 +24,14 @@ RESOURCE_OPERATIONS = ("list", "get", "create", "update", "delete", "import")
 
 
 @pytest.fixture(autouse=True)
+def no_billing_calls(monkeypatch):
+    """Keep tests off Studio: no consumption report leaves the test process."""
+    import agent_billing
+
+    monkeypatch.setattr(agent_billing, "account", None)
+
+
+@pytest.fixture(autouse=True)
 def reset_contacts():
     """Reset in-memory contacts store before each test."""
     _dr_module._contacts.clear()
