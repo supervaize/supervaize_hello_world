@@ -65,6 +65,10 @@ async def _send(
 
 
 def workspace_id(data: dict[str, Any]) -> str | None:
-    """The workspace that runs the job; None falls back to the account's workspace."""
+    """The workspace that runs the job; None falls back to the account's workspace.
+
+    Studio routes /w/<workspace>/ by slug: the request's workspace `id` is the
+    database key and answers 404.
+    """
     workspace = data.get("workspace")
-    return workspace.get("id") if isinstance(workspace, dict) else None
+    return workspace.get("slug") if isinstance(workspace, dict) else None

@@ -70,7 +70,7 @@ def test_job_start_reports_one_record_per_job(client, monkeypatch):
     assert calls == [
         {
             "agent_slug": simple_agent.slug,
-            "workspace_id": "workspace-1",
+            "workspace_id": "workspace",
             "job_id": "job-bill-1",
             "count": 3,
         }
