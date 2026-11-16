@@ -74,7 +74,7 @@ vercel_add_env:
     printf '%s' "$SUPERVAIZER_HOST" | vercel env add SUPERVAIZER_HOST production --force
     printf '%s' "$SUPERVAIZER_PORT" | vercel env add SUPERVAIZER_PORT production --force
     printf '%s' "$SUPERVAIZER_SCHEME" | vercel env add SUPERVAIZER_SCHEME production --force
-    printf '%s' "$SUPERVAIZE_PUBLIC_URL" | vercel env add SUPERVAIZE_PUBLIC_URL production --force
+    printf '%s' "$SUPERVAIZER_PUBLIC_URL" | vercel env add SUPERVAIZER_PUBLIC_URL production --force
 
 # Tag v<version> on origin/main, push the tag, then deploy to Vercel production
 deploy:

@@ -766,7 +766,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.143.1" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "supervaizer", specifier = "==1.8.0" },
+    { name = "supervaizer", specifier = "==1.11.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -777,7 +777,7 @@ dev = [
 
 [[package]]
 name = "supervaizer"
-version = "1.8.0"
+version = "1.11.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "art" },
@@ -801,9 +801,9 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/92/95414f101335bc2d1bc00f9fe11a87641308e8cfcd13b7e0f73d11beec40/supervaizer-1.8.0.tar.gz", hash = "sha256:e167e0571a6d7e48de5981a962bdf5963d2a5b9570774fcae1ab9c1ba0319618", size = 213975, upload-time = "2026-10-11T20:00:58.726Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/44/d4872548c43abc428be186598521eb11cae44a5a33b48576c318fd3f89b7/supervaizer-1.11.1.tar.gz", hash = "sha256:f3cc6ac8ce8022a48b8d56ca91ac679ed4e5ec2703875aee72a5c7ad3998d28b", size = 231787, upload-time = "2026-11-09T19:23:26.122Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/1e/de43d7840b47ae4949150b74f7b0fc9665732e47eb758ec0a99f94cd9fb2/supervaizer-1.8.0-py3-none-any.whl", hash = "sha256:68f7d868378c7616628dd49d85e2fcc2446af6e300c4ba6d22f980f14fc0db80", size = 280580, upload-time = "2026-10-11T20:00:56.724Z" },
+    { url = "https://files.pythonhosted.org/packages/20/3f/bc593dd28af3eb0d2388e368f3326d913bccee4713f26ca275442df8d5b2/supervaizer-1.11.1-py3-none-any.whl", hash = "sha256:38dd797782ab7333426e91caaf00ab6fb1305b2d3246d13ea6953cf86be5b05b", size = 298469, upload-time = "2026-11-09T19:23:24.445Z" },
 ]
 
 [[package]]
