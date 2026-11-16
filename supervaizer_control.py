@@ -19,7 +19,9 @@ from supervaizer import (
     Server,
 )
 
+import agent_billing
 import agent_rules
+from agent_billing import BILLING_CATALOG
 from agent_configurator import CONFIGURATOR_SURFACE, CONFIGURE_ACTION, GREET_ACTION
 from agent_dashboard import (
     ANALYTICS_SURFACE,
@@ -27,6 +29,8 @@ from agent_dashboard import (
     JOB_ANALYTICS_SURFACE,
 )
 from agent_data_resource import contacts_resource
+from agent_profile import FULL_DESCRIPTION, INTRODUCTION
+from agent_setup import SUGGEST_COUNT_ACTION, TEST_ACTION
 from agent_v2 import (
     CONTACT_ACTIONS,
     build_human_loop_v2_registration,
@@ -39,7 +43,7 @@ from agent_v2 import (
 
 #### SIMPLE AGENT ####
 agent_name = "Hello World AI Agent"
-AGENT_VERSION = "2.0"  # keep equal to pyproject.toml; `just deploy` checks and tags it
+AGENT_VERSION = "2.1"  # keep equal to pyproject.toml; `just deploy` checks and tags it
 
 # Define the parameters and secrets expected by the agent
 simple_agent_parameters = ParametersSetup.from_list([
@@ -68,6 +72,9 @@ simple_agent: Agent = Agent(
     parameters_setup=simple_agent_parameters,
     data_resources=[contacts_resource],
     supervaizer_v2_registration=build_simple_agent_v2_registration(AGENT_VERSION),
+    introduction=INTRODUCTION,
+    full_description=FULL_DESCRIPTION,
+    billing_catalog=BILLING_CATALOG,
 )
 
 
@@ -121,6 +128,8 @@ def _register_v2_handlers(server: Server) -> None:
         CONFIGURE_ACTION,
         GREET_ACTION,
         DATASET_QUERY_ACTION,
+        SUGGEST_COUNT_ACTION.id,
+        TEST_ACTION.id,
         *CONTACT_ACTIONS,
     ):
         server.register_v2_action(
@@ -150,6 +159,7 @@ def _register_v2_handlers(server: Server) -> None:
 _register_v2_handlers(sv_server)
 # The rule checkpoint gate posts to Studio with the supervisor account.
 agent_rules.account = sv_server.supervisor_account
+agent_billing.account = sv_server.supervisor_account
 
 
 # Expose the FastAPI app instance for deployment
