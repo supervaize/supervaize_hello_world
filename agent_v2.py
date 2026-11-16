@@ -350,7 +350,7 @@ def _registration(
     job_policy: dict[str, Any] = {
         "sync": {
             "action": "job.sync",
-            "supported_statuses": ["active", "awaiting", "completed"],
+            "supported_statuses": ["in_progress", "awaiting", "completed"],
         }
     }
     if setup_plan is not None:
