@@ -29,7 +29,8 @@ class FakeStudio:
     """Answers the gate's checkpoint posts with scripted decisions, in order."""
 
     def __init__(self, *decisions):
-        self.decisions, self.posts, self.answers, self.refreshes = list(decisions), [], [], []
+        self.decisions, self.posts, self.answers = list(decisions), [], []
+        self.refreshes, self.pushes = [], []
 
     async def post(self, url, *, headers, json):
         self.posts.append({"url": url, "headers": headers, "body": json})
@@ -48,8 +49,9 @@ def studio(monkeypatch):
     def install(*decisions):
         fake = FakeStudio(*decisions)
         monkeypatch.setattr(rule_controls._httpx_client, "post", fake.post)
-        # Records the refresh request instead of a background post to Studio.
+        # Records the refresh requests and job pushes instead of background posts to Studio.
         monkeypatch.setattr(agent_rules, "schedule_refresh", fake.refreshes.append)
+        monkeypatch.setattr(agent_rules, "schedule_push", fake.pushes.append)
         return fake
 
     return install
@@ -122,7 +124,7 @@ def test_allowed_checkpoints_complete_the_job_on_sync(client, studio):
 
     started = _start(client, "job-rules-1", rule_snapshot=SNAPSHOT)
 
-    assert started["status"] == "active"
+    assert started["status"] == "in_progress"
     assert started["message"] == "2 hello case(s) held for Studio rule checkpoints"
     assert [case["steps"][-1]["status"] for case in started["job_state"]["cases"]] == ["pending", "pending"]
     assert all(case["steps"][-1]["outputs"] == [] for case in started["job_state"]["cases"])  # no card yet
@@ -181,8 +183,9 @@ def test_paused_checkpoint_parks_the_step_until_studio_resumes(client, studio):
     resumed = _resume(client, fake, "job-rules-2", case)
 
     assert resumed["type"] == "rule.checkpoint.resumed"
-    # Studio reads no job_state from a resume answer: the agent asks for a job.sync again.
-    assert fake.refreshes == ["job-rules-2", "job-rules-2"]
+    # Studio reads no job_state from a resume answer: the agent pushes the resumed job.
+    assert fake.refreshes == ["job-rules-2"]
+    assert [push["job"] for push in fake.pushes] == [resumed["job_state"]["job"]]
     assert resumed["job_state"]["job"]["status"] == "completed"
     assert all(step["status"] == "completed" for c in resumed["job_state"]["cases"] for step in c["steps"])
     assert "awaiting" not in resumed["job_state"]["cases"][0]["steps"][-1]
@@ -240,37 +243,50 @@ def test_refused_checkpoint_reports_studios_answer_and_is_asked_again(client, st
     assert [post["body"]["phase"] for post in fake.posts] == ["before", "after"]
 
 
-def test_refresh_request_asks_studio_to_sync_the_job(monkeypatch):
-    """The event Studio turns into a job.sync, which runs the held checkpoints."""
+def _sent_events(monkeypatch, schedule):
+    """Run a schedule_* call with no delay and return the event payloads the SDK posts."""
     import asyncio
+
+    from supervaizer import account_service
 
     posts = []
 
     async def post(url, *, headers, json):
-        posts.append({"url": url, "headers": headers, "body": json})
-        return SimpleNamespace(raise_for_status=lambda: None)
+        posts.append(json)
+        return httpx.Response(200, json={}, request=httpx.Request("POST", url))
 
-    account = SimpleNamespace(
-        url_event="https://studio.example/w/odm/api/v1/ctrl-events/",
-        api_headers={"Authorization": "Api-Key test"},
-        workspace_id="odm",
-    )
-    monkeypatch.setattr(agent_rules, "account", account)
-    monkeypatch.setattr(agent_rules, "REFRESH_DELAY_SECONDS", 0)
-    monkeypatch.setattr(agent_rules._refresh_client, "post", post)
+    monkeypatch.setattr(account_service, "is_local_mode", lambda: False)
+    monkeypatch.setattr(account_service._httpx_client, "post", post)
+    monkeypatch.setattr(agent_rules, "EVENT_DELAY_SECONDS", 0)
 
-    asyncio.run(agent_rules._request_refresh("job-rules-9"))
+    async def run():
+        schedule()
+        await asyncio.gather(*agent_rules._event_tasks)
 
-    assert posts == [
-        {
-            "url": "https://studio.example/w/odm/api/v1/ctrl-events/",
-            "headers": {"Authorization": "Api-Key test"},
-            "body": {
-                "source": {"job": "job-rules-9"},
-                "workspace": "odm",
-                "event_type": "supervaizer.v2.job.refresh_requested",
-                "object_type": "job",
-                "details": {"reason": "rule_checkpoints"},
-            },
-        }
+    asyncio.run(run())
+    return posts
+
+
+def test_refresh_request_asks_studio_to_sync_the_job(monkeypatch):
+    """The event Studio turns into a job.sync, which runs the held checkpoints."""
+    posts = _sent_events(monkeypatch, lambda: agent_rules.schedule_refresh("job-rules-9"))
+
+    assert [(post["event_type"], post["source"], post["details"]) for post in posts] == [
+        ("supervaizer.v2.job.refresh_requested", {"job": "job-rules-9"}, {"reason": "rule_checkpoints"})
+    ]
+
+
+def test_push_sends_the_job_and_its_cases_to_studio(monkeypatch):
+    """After a resume the agent pushes the job: Studio applies it to the open job page."""
+    case = {"id": "job-rules-10-case-1", "status": "completed", "steps": []}
+    job_state = {"job": {"id": "job-rules-10", "status": "completed"}, "cases": [case]}
+
+    posts = _sent_events(monkeypatch, lambda: agent_rules.schedule_push(job_state))
+
+    assert [(post["event_type"], post["source"], post["details"]) for post in posts] == [
+        (
+            "supervaizer.v2.job.updated",
+            {"job": "job-rules-10"},
+            {"job": {"status": "completed"}, "cases": [case], "reason": "rule_checkpoint_resumed"},
+        )
     ]

@@ -32,13 +32,11 @@ account: Account | None = None
 # ponytail: in-memory per job; a restart loses the gate and its snapshot token,
 # so a decision that arrives after one is rejected. A real agent persists both.
 _pending: dict[str, dict[str, Any]] = {}
-REFRESH_EVENT = "supervaizer.v2.job.refresh_requested"
 # ponytail: a fixed wait, so Studio has applied the job.start result and knows the
 # cases before its job.sync runs the checkpoints. A slower Studio rejects the
 # checkpoints and the job waits for a manual Update, as it did before.
-REFRESH_DELAY_SECONDS = 2.0
-_refresh_client = httpx.AsyncClient(timeout=30.0)
-_refresh_tasks: set[asyncio.Task] = set()
+EVENT_DELAY_SECONDS = 2.0
+_event_tasks: set[asyncio.Task] = set()
 
 
 class RecoveryRequired(RuntimeError):
@@ -59,7 +57,7 @@ def open_gate(data: dict[str, Any], job_state: dict[str, Any]) -> None:
         for step in case["steps"]:
             step["status"] = "pending"
         held_outputs[case["id"]] = _hello_step(case).pop("outputs", [])
-    _set_job_status(job_state, "active")
+    _set_job_status(job_state, "in_progress")
     _pending[job_state["job"]["id"]] = {
         "gate": gate,
         "job_state": job_state,
@@ -72,30 +70,36 @@ def open_gate(data: dict[str, Any], job_state: dict[str, Any]) -> None:
 
 def schedule_refresh(job_id: str) -> None:
     """Ask Studio, in the background, to sync the job: Studio never polls a v2 job."""
-    task = asyncio.get_running_loop().create_task(_request_refresh(job_id))
-    _refresh_tasks.add(task)  # the loop keeps only weak references to tasks
-    task.add_done_callback(_refresh_tasks.discard)
+    _in_background(job_id, account.request_job_refresh, job_id, reason="rule_checkpoints")
 
 
-async def _request_refresh(job_id: str) -> None:
-    await asyncio.sleep(REFRESH_DELAY_SECONDS)
-    # Async on purpose: Studio handles the event inline and calls job.sync on this
-    # process before it answers, so a blocking post would freeze the event loop.
+def schedule_push(job_state: dict[str, Any]) -> None:
+    """Push the job and its cases to Studio in the background: the live job page updates at once."""
+    job_id = job_state["job"]["id"]
+    _in_background(
+        job_id,
+        account.push_job_update,
+        job_id,
+        job={"status": job_state["job"]["status"]},
+        cases=job_state["cases"],
+        reason="rule_checkpoint_resumed",
+    )
+
+
+def _in_background(job_id: str, send: Any, *args: Any, **kwargs: Any) -> None:
+    task = asyncio.get_running_loop().create_task(_send_later(job_id, send, *args, **kwargs))
+    _event_tasks.add(task)  # the loop keeps only weak references to tasks
+    task.add_done_callback(_event_tasks.discard)
+
+
+async def _send_later(job_id: str, send: Any, *args: Any, **kwargs: Any) -> None:
+    await asyncio.sleep(EVENT_DELAY_SECONDS)
+    # The SDK posts with an async client: Studio handles a refresh inline and calls
+    # job.sync on this process before it answers, so a blocking post would freeze the loop.
     try:
-        response = await _refresh_client.post(
-            account.url_event,
-            headers=account.api_headers,
-            json={
-                "source": {"job": job_id},
-                "workspace": account.workspace_id,
-                "event_type": REFRESH_EVENT,
-                "object_type": "job",
-                "details": {"reason": "rule_checkpoints"},
-            },
-        )
-        response.raise_for_status()
+        await send(*args, **kwargs)
     except httpx.HTTPError as error:
-        log.warning(f"[Rules] Studio did not sync job {job_id}; it waits for a manual Update: {error}")
+        log.warning(f"[Rules] Studio did not take the event for job {job_id}; it waits for a manual Update: {error}")
 
 
 async def sync(job_id: str) -> dict[str, Any] | None:
@@ -130,8 +134,8 @@ async def resume(data: dict[str, Any]) -> dict[str, Any]:
     pending["waiter"] = None
     await _run(pending, response)
     # Studio only delivers the decision: it reads no job_state from this answer,
-    # so it sees the resumed step on the job.sync that this request asks for.
-    schedule_refresh(decision.job_id)
+    # so the agent pushes the resumed job to Studio (supervaizer.v2.job.updated).
+    schedule_push(pending["job_state"])
     return pending["job_state"]
 
 
@@ -180,7 +184,7 @@ async def _run(pending: dict[str, Any], decision: RuleCheckpointResponse | None 
             # ponytail: the effect is the greeting already in case.metadata
             case["steps"][0]["status"] = "completed"  # Start
             step["outputs"] = pending["outputs"].pop(case["id"])
-            _set_status(job_state, case, "active")
+            _set_status(job_state, case, "in_progress")
             pending["cursor"] = (index, "after")
         else:
             _set_status(job_state, case, "completed")
@@ -217,5 +221,5 @@ def _set_job_status(job_state: dict[str, Any], status: str) -> None:
     if any(case["status"] == "awaiting" for case in cases):
         status = "awaiting"
     elif status == "completed" and any(case["status"] != "completed" for case in cases):
-        status = "active"
+        status = "in_progress"
     job_state["job"]["status"] = status
